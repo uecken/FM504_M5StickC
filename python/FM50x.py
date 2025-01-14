@@ -1,6 +1,18 @@
 import serial
 import time
 
+def send_command(ser, command, description):
+    """コマンドを送信し、応答を待つ"""
+    print(f"\n=== {description} ===")
+    ser.reset_input_buffer()
+    ser.reset_output_buffer()
+    ser.write(command)
+    print(f"Sent command: {' '.join(f'{b:02X}' for b in command)}")
+    ser.flush()
+    time.sleep(0.1)
+    response = read_response(ser)
+    return response
+
 def send_query_epc_command(ser):
     print("\n=== Query EPC ===")
     
@@ -14,7 +26,7 @@ def send_query_epc_command(ser):
     print("Sent Query EPC command: <LF>Q<CR>")
     
     ser.flush()
-    time.sleep(0.2)
+    time.sleep(0.1)
     
     # 応答を読み取る
     response = read_response(ser)
@@ -46,6 +58,29 @@ def read_response(ser):
     
     return response
 
+def initialize_reader(ser):
+    """リーダーの初期設定を行う"""
+    # JP mode 916-921MHz設定
+    #jp_mode_cmd = b'\x0A\x4E\x35\x2C\x30\x36\x0D'
+    #send_command(ser, jp_mode_cmd, "Set JP Mode 916-921MHz")
+    
+    # TW mode 922-928MHz設定
+    tw_mode_cmd = b'\x0A\x4E\x35\x2C\x30\x32\x0D'
+    send_command(ser, tw_mode_cmd, "Set TW Mode 922-928MHz")
+    time.sleep(0.1)
+    
+    # 周波数設定 (<LF>J101<CR> を16進数で表現)
+    #freq_cmd = b'\x0A\x4A\x31\x30\x31\x0D'
+    #end_command(ser, freq_cmd, "Set Frequency")
+
+    
+    # 周波数設定 (<LF>J110<CR> を16進数で表現)
+    freq_cmd = b'\x0A\x4A\x31\x30\x32\x0D'
+    send_command(ser, freq_cmd, "Set Frequency")
+    time.sleep(0.1)
+
+
+
 def main(port='COM9', baudrate=38400):
     try:
         # シリアルポートを開く
@@ -58,6 +93,8 @@ def main(port='COM9', baudrate=38400):
             timeout=1
         )
         print(f"Port {port} opened successfully at {baudrate}bps")
+
+        initialize_reader(ser)
         
         print("\nStarting continuous Query EPC (Press Ctrl+C to stop)")
         read_count = 0
@@ -68,7 +105,7 @@ def main(port='COM9', baudrate=38400):
             elapsed = time.time() - start_time
             print(f"\nQuery #{read_count} (Elapsed: {elapsed:.1f}s)")
             send_query_epc_command(ser)
-            time.sleep(1.0)  # 1秒待機
+            time.sleep(0.1)  # 1秒待機
             
     except KeyboardInterrupt:
         print(f"\nStopping... Total queries: {read_count}")
