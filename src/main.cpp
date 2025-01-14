@@ -1,4 +1,5 @@
-#include <M5StickCPlus.h>
+#include <M5StickC.h>
+#include <BleCombo.h>  // Include the BLE Combo library
 
 // ピン定義
 const int RXPIN = 0;     // RX pin
@@ -24,10 +25,22 @@ void setEN(bool high);
 void sendCommand(const uint8_t* cmd, size_t len);
 void readResponse();
 void readPower();
+void sendString(const char* str);
 
 bool isTagDetected = false;  // Declare the variable
 int currentPower = 25;  // デフォルトは25dBm
 int currentPower_read = -30; 
+
+BleCombo bleCombo("M5 RFID Reader", "M5Stack", 100);  // Initialize BLE Combo
+
+// 文字列送信用の関数を修正
+void sendString(const char* str) {
+    if (bleCombo.isConnected()) {
+        Serial.printf("BLE HID Sending: %s\n", str);
+        bleCombo.print(str);
+        bleCombo.write(KEY_RETURN);  // 改行を送信
+    }
+}
 
 void setEN(bool high) {
     gpio_set_level((gpio_num_t)EN_PIN, high ? 1 : 0);
@@ -52,57 +65,44 @@ void readResponse() {
     size_t len = 0;
     unsigned long startTime = millis();
     
-    while (millis() - startTime < 50) {
+    while (millis() - startTime < 10) {
         if (Serial2.available()) {
             uint8_t c = Serial2.read();
             buffer[len] = c;
-
             len++;
             if (len >= sizeof(buffer)) break;
             
-            // タグ検出の判定（応答が4バイト以上でQコマンドの場合）
             if (len > 4 && buffer[1] == 0x51 && buffer[2] != 0x0D) {
                 isTagDetected = true;
             }
         }
-        else if (len > 0 && millis() - startTime > 100) {
+        else if (len > 0 && millis() - startTime > 10) {
             break;
         }
     }
     
     if (len > 0) {
         Serial.print("Response: ");
-        for (size_t i = 0; i < len; i++) {
-            Serial.printf("%02X ", buffer[i]);
-        }
-        Serial.println();
+        char idString[64] = "";
+        int idIndex = 0;
 
-        // 画面表示の処理を追加
-        M5.Lcd.fillScreen(BLACK);  // 画面をクリア
-        M5.Lcd.setCursor(0, 0);
-        M5.Lcd.setTextSize(2);
-
-        // コマンドタイプに応じた表示処理
-        if (buffer[1] == 0x51) {  // Query response
-            M5.Lcd.println("Query Response:");
-        } else if (buffer[1] == 0x55) {  // Multi response
-            M5.Lcd.println("Multi Response:");
+        // IDデータの抽出（4バイト目から12バイト分がID）
+        for (size_t i = 4; i < len && i < 16; i++) {
+            sprintf(&idString[idIndex], "%02X", buffer[i]);
+            idIndex += 2;
         }
-
-        // データの表示
-        M5.Lcd.setTextSize(1);
-        for (size_t i = 0; i < len; i++) {
-            if (i % 8 == 0) {
-                M5.Lcd.println();
-            }
-            M5.Lcd.printf("%02X ", buffer[i]);
+        
+        // 画面表示とBLE送信
+        if (idIndex > 0) {
+            Serial.printf("ID: %s\n", idString);
+            M5.Lcd.fillScreen(BLACK);
+            M5.Lcd.setCursor(0, 0);
+            M5.Lcd.setTextSize(2);
+            M5.Lcd.printf("ID: %s", idString);
+            
+            // BLE経由で送信
+            sendString(idString);
         }
-    } else {
-        Serial.println("No response");
-        M5.Lcd.fillScreen(BLACK);
-        M5.Lcd.setCursor(0, 0);
-        M5.Lcd.setTextSize(2);
-        M5.Lcd.println("No Response");
     }
 }
 
@@ -129,16 +129,14 @@ void readPower() {
         }
         Serial.println();
 
-        // 応答データから"N"の後の2桁の数値を探す
-        for (size_t i = 0; i < len - 2; i++) {
-            if (buffer[i] == 'N') {
-                // 次の2文字を数値として解釈
-                char power_str[3] = {(char)buffer[i+1], (char)buffer[i+2], '\0'};
-                if (isdigit(power_str[0]) && isdigit(power_str[1])) {
-                    currentPower_read = atoi(power_str);
-                    Serial.printf("Power extracted: %d dBm\n", currentPower_read);
-                    break;
-                }
+        // 応答データから数値を探す
+        for (size_t i = 0; i < len - 1; i++) {
+            if (buffer[i] >= '0' && buffer[i] <= '9' && 
+                buffer[i+1] >= '0' && buffer[i+1] <= '9') {
+                char power_str[3] = {(char)buffer[i], (char)buffer[i+1], '\0'};
+                currentPower_read = atoi(power_str);
+                Serial.printf("Power extracted: [%s] = %d dBm\n", power_str, currentPower_read);
+                break;
             }
         }
     }
@@ -189,6 +187,19 @@ void setup() {
     
     Serial.println("Initialization completed");
     M5.Lcd.println("\nQuery Mode");
+    
+    // BLE初期化
+    bleCombo.begin();  // Start BLE Combo
+    Serial.println("Starting BLE Keyboard!");
+    
+    // BLE接続待ち
+    M5.Lcd.println("\nWaiting for BLE");
+    while (!bleCombo.isConnected()) {
+        M5.Lcd.print(".");
+        delay(500);
+    }
+    M5.Lcd.println("\nBLE Connected!");
+    delay(1000);
 }
 
 void loop() {
@@ -196,8 +207,13 @@ void loop() {
     static unsigned long lastQuery = 0;
     static int queryCount = 0;
     
+    // BLE接続状態を表示
+    M5.Lcd.setCursor(0, 110);
+    M5.Lcd.setTextSize(1);
+    M5.Lcd.printf("BLE: %s", bleCombo.isConnected() ? "Connected" : "Waiting...");
+    
     // 100msごとにQuery実行
-    if (millis() - lastQuery >= 00) {
+    if (millis() - lastQuery >= 10) {
         lastQuery = millis();
         queryCount++;
         
@@ -219,7 +235,7 @@ void loop() {
         readResponse();
         
         // 読み取り完了後、ENピンをLOWに（Sleepモード）
-        setEN(false);
+        //setEN(false);
     }
     
     // Aボタン: Multi Query
@@ -279,7 +295,7 @@ void loop() {
         M5.Lcd.printf("Power: %ddBm   ", currentPower_read);
         
         delay(5);
-        setEN(false);  // Sleepモード
+        //setEN(false);  // Sleepモード
     }
     
     delay(5);
