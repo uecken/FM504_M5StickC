@@ -1,5 +1,12 @@
 #include <M5StickC.h>
 #include <BleCombo.h>  // Include the BLE Combo library
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+
+// キュー定義
+static QueueHandle_t idQueue;
+#define QUEUE_SIZE 20
+#define QUEUE_ITEM_SIZE 64
 
 // ピン定義
 const int RXPIN = 0;     // RX pin
@@ -27,11 +34,21 @@ void readResponse();
 void readPower();
 void sendString(const char* str);
 
-bool isTagDetected = false;  // Declare the variable
-int currentPower = 25;  // デフォルトは25dBm
-int currentPower_read = -30; 
+// グローバル変数（既存のものは維持）
+bool isTagDetected = false;
+int currentPower = 25;
+int currentPower_read = -30;
 
-BleCombo bleCombo("M5 RFID Reader", "M5Stack", 100);  // Initialize BLE Combo
+// BLEの初期化
+BleCombo bleCombo("M5 RFID Reader", "M5Stack", 100);
+
+// タスク関数のプロトタイプ宣言
+void rfidTask(void *pvParameters);
+void bleTask(void *pvParameters);
+void buttonTask(void *pvParameters);
+
+// ボタン処理用のキュー
+static QueueHandle_t powerQueue;
 
 // 文字列送信用の関数を修正
 void sendString(const char* str) {
@@ -143,160 +160,168 @@ void readPower() {
 }
 
 void setup() {
-    // LEDCの初期化パラメータを設定
-    ledcSetup(0, 1000, 8);  // チャンネル0、周波数1000Hz、分解能8ビット
-    
-    // M5StickCPlusの初期化
-    M5.begin(true, true, false);  // LCD有効, Power有効, Serial無効
-    //M5.begin();
+    M5.begin(true, true, false);
     Serial.begin(115200);
-    Serial.println("\nFM505 Basic Test");
-
+    
+    // 画面設定
     M5.Lcd.setRotation(3);
     M5.Lcd.fillScreen(BLACK);
     M5.Lcd.setTextSize(2);
-    M5.Lcd.println("FM505 Test");
-
-
-    // GPIO設定
+    M5.Lcd.println("RFID Reader");
+    
+    // キューの作成
+    idQueue = xQueueCreate(QUEUE_SIZE, QUEUE_ITEM_SIZE);
+    powerQueue = xQueueCreate(5, sizeof(int));  // パワー設定用キュー
+    
+    // RFIDの初期化（既存のコードを使用）
     gpio_pad_select_gpio(EN_PIN);
     gpio_set_direction((gpio_num_t)EN_PIN, GPIO_MODE_OUTPUT);
-    setEN(true);  // 期設定用にENをHIGH
-    
-    // Serial2の初期化（38400bps）
-    Serial2.begin(38400, SERIAL_8N1, RXPIN, TXPIN);
-    while(!Serial2) {
-        delay(10);
-    }
-    Serial2.flush();
-    
-    // プルアップ有効化
-    gpio_set_pull_mode((gpio_num_t)RXPIN, GPIO_PULLUP_ONLY);
-    
-    // JP mode 916-921MHz設定
-    sendCommand(CMD_JP_MODE, sizeof(CMD_JP_MODE));
-    delay(100);
-    
-    //周波数設定
-    //freq_cmd = b'\x0A\x4A\x31\x30\x35\x0D';
-    sendCommand(CMD_FREQ_922, sizeof(CMD_FREQ_922));
-    delay(100);
-
-    // 初期設定完了後、ENをLOWに
     setEN(true);
     
-    Serial.println("Initialization completed");
-    M5.Lcd.println("\nQuery Mode");
+    Serial2.begin(38400, SERIAL_8N1, RXPIN, TXPIN);
+    gpio_set_pull_mode((gpio_num_t)RXPIN, GPIO_PULLUP_ONLY);
+    
+    // 初期設定
+    sendCommand(CMD_JP_MODE, sizeof(CMD_JP_MODE));
+    delay(100);
+    sendCommand(CMD_FREQ_922, sizeof(CMD_FREQ_922));
+    delay(100);
+    sendCommand(CMD_POWER_25, sizeof(CMD_POWER_25));
+    delay(100);
     
     // BLE初期化
-    bleCombo.begin();  // Start BLE Combo
-    Serial.println("Starting BLE Keyboard!");
+    bleCombo.begin();
     
-    // BLE接続待ち
-    M5.Lcd.println("\nWaiting for BLE");
-    while (!bleCombo.isConnected()) {
-        M5.Lcd.print(".");
-        delay(500);
-    }
-    M5.Lcd.println("\nBLE Connected!");
-    delay(1000);
+    // タスクの作成（コア指定）
+    xTaskCreatePinnedToCore(rfidTask, "RFID Task", 4096, NULL, 1, NULL, 1);    // Core 1
+    xTaskCreatePinnedToCore(bleTask, "BLE Task", 4096, NULL, 1, NULL, 0);      // Core 0
+    xTaskCreatePinnedToCore(buttonTask, "Button Task", 4096, NULL, 1, NULL, 1); // Core 1
+    
+    Serial.println("Initialization completed");
 }
 
 void loop() {
-    M5.update();
-    static unsigned long lastQuery = 0;
-    static int queryCount = 0;
-    
-    // BLE接続状態を表示
-    M5.Lcd.setCursor(0, 110);
-    M5.Lcd.setTextSize(1);
-    M5.Lcd.printf("BLE: %s", bleCombo.isConnected() ? "Connected" : "Waiting...");
-    
-    // 100msごとにQuery実行
-    if (millis() - lastQuery >= 10) {
-        lastQuery = millis();
-        queryCount++;
-        
-        // バッファクリア
-        while(Serial2.available()) {
-            Serial2.read();
-        }
-        
-        // Query前にENピンをHIGHに設定（Standbyモード）
-        setEN(true);
-        delay(10);
-        
-        // Query EPCコマンド送信
-        Serial.printf("\nQuery #%d\n", queryCount);
-        //sendCommand(CMD_QUERY, sizeof(CMD_QUERY));
-        sendCommand(CMD_MULTI, sizeof(CMD_MULTI));
-        
-        // 応答読み取り
-        readResponse();
-        
-        // 読み取り完了後、ENピンをLOWに（Sleepモード）
-        //setEN(false);
-    }
-    
-    // Aボタン: Multi Query
-    /*
-    if (M5.BtnA.wasPressed()) {
-        setEN(true);  // Standbyモード
-        delay(50);
-        
-        Serial.println("\n=== Multi Query ===");
-        sendCommand(CMD_MULTI, sizeof(CMD_MULTI));
-        readResponse();
-        
-        setEN(false);  // Sleepモード
-    }
-    */
-    
-    // Bボタン: バージョン確認
-    if (M5.BtnB.wasReleased()) {
-        setEN(true);  // Standbyモード
-        delay(50);
-        
-        // パワー設定の切り替え
-        switch (currentPower) {
-            case 25:
-                currentPower = 20;
-                sendCommand(CMD_POWER_20, sizeof(CMD_POWER_20));
-                break;
-            case 20:
-                currentPower = 15;
-                sendCommand(CMD_POWER_15, sizeof(CMD_POWER_15));
-                break;
-            case 15:
-                currentPower = 10;
-                sendCommand(CMD_POWER_10, sizeof(CMD_POWER_10));
-                break;
-            case 10:
-                currentPower = 5;
-                sendCommand(CMD_POWER_5, sizeof(CMD_POWER_5));
-                break;
-            case 5:
-                currentPower = 2;
-                sendCommand(CMD_POWER_2, sizeof(CMD_POWER_2));
-                break;
-            default:
-                currentPower = 25;
-                sendCommand(CMD_POWER_25, sizeof(CMD_POWER_25));
-                break;
-        }
+}
 
-        // パワー設定後に実際の値を読み取る
-        delay(50);
-        readPower();
+void rfidTask(void *pvParameters) {
+    while (true) {
+        static unsigned long lastQuery = 0;
         
-        // 画面表示
-        M5.Lcd.setCursor(10, 100);
-        M5.Lcd.setTextSize(2);
-        M5.Lcd.printf("Power: %ddBm   ", currentPower_read);
+        if (millis() - lastQuery >= 100) {
+            lastQuery = millis();
+            
+            setEN(true);
+            delay(5);
+            sendCommand(CMD_MULTI, sizeof(CMD_MULTI));
+            
+            // 応答の読み取りと処理
+            uint8_t buffer[256];
+            size_t len = 0;
+            unsigned long startTime = millis();
+            
+            memset(buffer, 0, sizeof(buffer));  // バッファをクリア
+            
+            while (millis() - startTime < 50) {
+                if (Serial2.available()) {
+                    buffer[len] = Serial2.read();
+                    len++;
+                    if (len >= sizeof(buffer)) break;
+                }
+            }
+            
+            if (len > 0) {
+                // デバッグ出力
+                Serial.print("Response Raw: ");
+                for (size_t i = 0; i < len; i++) {
+                    Serial.printf("%02X ", buffer[i]);
+                }
+                Serial.println();
+
+                // 有効なEPCデータを探す
+                for (size_t i = 0; i < len - 24; i++) {
+                    // パターン: <LF>U3000 を探す
+                    if (buffer[i] == 0x0A &&      // <LF>
+                        buffer[i+1] == 0x55 &&    // U
+                        buffer[i+2] == 0x33 &&    // 3
+                        buffer[i+3] == 0x30 &&    // 0
+                        buffer[i+4] == 0x30 &&    // 0
+                        buffer[i+5] == 0x30) {    // 0
+                        
+                        char idString[64] = {0};
+                        int idIndex = 0;
+                        bool validData = true;
+                        
+                        // EPCデータの抽出（12バイト分）
+                        for (size_t j = i + 6; j < i + 30 && j < len; j += 2) {
+                            // 16進数文字のチェック
+                            if (isxdigit(buffer[j]) && isxdigit(buffer[j+1])) {
+                                char hex[3] = {(char)buffer[j], (char)buffer[j+1], 0};
+                                sprintf(&idString[idIndex], "%s", hex);
+                                idIndex += 2;
+                            } else {
+                                validData = false;
+                                break;
+                            }
+                        }
+                        
+                        if (validData && idIndex == 24) {  // 正確に12バイト（24文字）
+                            Serial.printf("Valid EPC: %s\n", idString);
+                            
+                            // 画面表示
+                            M5.Lcd.fillScreen(BLACK);
+                            M5.Lcd.setCursor(0, 0);
+                            M5.Lcd.setTextSize(2);
+                            M5.Lcd.printf("EPC:\n%s", idString);
+                            
+                            // キューに送信
+                            xQueueSend(idQueue, idString, 0);
+                            break;  // 有効なデータを見つけたら終了
+                        }
+                    }
+                }
+            }
+            
+            setEN(false);
+        }
         
-        delay(5);
-        //setEN(false);  // Sleepモード
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
-    
-    delay(5);
+}
+
+void bleTask(void *pvParameters) {
+    char receivedId[64];
+    while (true) {
+        // キューからIDを受信
+        if (xQueueReceive(idQueue, &receivedId, portMAX_DELAY) == pdTRUE) {
+            if (bleCombo.isConnected()) {
+                Serial.printf("BLE HID Sending: %s\n", receivedId);
+                bleCombo.print(receivedId);
+                bleCombo.write(KEY_RETURN);  // 改行を送信
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
+void buttonTask(void *pvParameters) {
+    while (true) {
+        M5.update();  // ボタン状態の更新
+        
+        if (M5.BtnB.wasReleased()) {
+            // パワー設定の切り替え
+            switch (currentPower) {
+                case 25: currentPower = 20; break;
+                case 20: currentPower = 15; break;
+                case 15: currentPower = 10; break;
+                case 10: currentPower = 5;  break;
+                case 5:  currentPower = 2;  break;
+                default: currentPower = 25; break;
+            }
+            
+            // キューに新しいパワー値を送信
+            xQueueSend(powerQueue, &currentPower, 0);
+        }
+        
+        vTaskDelay(pdMS_TO_TICKS(50));  // 50ms待機
+    }
 }
