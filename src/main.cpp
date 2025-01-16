@@ -204,10 +204,15 @@ void loop() {
 }
 
 void rfidTask(void *pvParameters) {
+    TickType_t xLastWakeTime;
+    const TickType_t xFrequency = pdMS_TO_TICKS(10);  // 10ms周期
+    
+    xLastWakeTime = xTaskGetTickCount();
+    
     while (true) {
         static unsigned long lastQuery = 0;
         
-        if (millis() - lastQuery >= 100) {
+        if (millis() - lastQuery >= 100) {  // RFIDの読み取りは100ms間隔
             lastQuery = millis();
             
             setEN(true);
@@ -284,22 +289,29 @@ void rfidTask(void *pvParameters) {
             setEN(false);
         }
         
-        vTaskDelay(pdMS_TO_TICKS(10));
+        // 正確な10ms周期で実行
+        vTaskDelayUntil(&xLastWakeTime, xFrequency);
     }
 }
 
 void bleTask(void *pvParameters) {
     char receivedId[64];
+    TickType_t xLastWakeTime;
+    const TickType_t xFrequency = pdMS_TO_TICKS(100);  // 10ms周期
+    
+    xLastWakeTime = xTaskGetTickCount();
+    
     while (true) {
-        // キューからIDを受信
-        if (xQueueReceive(idQueue, &receivedId, portMAX_DELAY) == pdTRUE) {
+        if (xQueueReceive(idQueue, &receivedId, 0) == pdTRUE) {
             if (bleCombo.isConnected()) {
                 Serial.printf("BLE HID Sending: %s\n", receivedId);
                 bleCombo.print(receivedId);
-                bleCombo.write(KEY_RETURN);  // 改行を送信
+                bleCombo.write(KEY_RETURN);
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(10));
+        
+        // 正確な10ms周期で実行
+        vTaskDelayUntil(&xLastWakeTime, xFrequency);
     }
 }
 
