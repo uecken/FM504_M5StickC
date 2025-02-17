@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>QRコードリーダー</title>
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+    <style>
+        #video-container {
+            width: 100%;
+            max-width: 640px;
+            margin: 0 auto;
+        }
+        #qr-video {
+            width: 100%;
+        }
+        #qr-result {
+            width: 90%;
+            margin: 10px auto;
+            padding: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div id="video-container">
+        <video id="qr-video" playsinline autoplay></video>
+    </div>
+    <textarea id="qr-result" rows="4" placeholder="QRコードの内容がここに表示されます"></textarea>
+
+    <script>
+        const video = document.getElementById('qr-video');
+        const resultArea = document.getElementById('qr-result');
+        let canvasElement = document.createElement("canvas");
+        let canvas = canvasElement.getContext("2d");
+
+        // カメラの起動設定を修正
+        const constraints = {
+            video: {
+                facingMode: "environment",
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+                frameRate: { ideal: 30 }
+            }
+        };
+
+        async function startCamera() {
+            try {
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    throw new Error("このブラウザはカメラをサポートしていません");
+                }
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                video.srcObject = stream;
+                await video.play();
+                requestAnimationFrame(tick);
+            } catch (error) {
+                console.error("カメラの起動に失敗しました:", error.name, error.message);
+                alert(`カメラの起動に失敗しました: ${error.message}`);
+                // フロントカメラでの再試行
+                try {
+                    const frontStream = await navigator.mediaDevices.getUserMedia({
+                        video: { facingMode: "user" }
+                    });
+                    video.srcObject = frontStream;
+                    await video.play();
+                    requestAnimationFrame(tick);
+                } catch (frontError) {
+                    console.error("フロントカメラでも失敗:", frontError);
+                }
+            }
+        }
+
+        // カメラ起動の実行
+        startCamera();
+
+        function tick() {
+            if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                canvasElement.height = video.videoHeight;
+                canvasElement.width = video.videoWidth;
+                canvas.drawImage(video, 0, 0, canvasElement.width, canvasElement.height);
+                let imageData = canvas.getImageData(0, 0, canvasElement.width, canvasElement.height);
+                
+                const code = jsQR(imageData.data, imageData.width, imageData.height);
+                if (code) {
+                    // QRコードが検出された場合
+                    if (resultArea.value !== code.data) {
+                        resultArea.value = code.data;
+                    }
+                }
+            }
+            requestAnimationFrame(tick);
+        }
+    </script>
+</body>
+</html>

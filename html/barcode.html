@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>バーコードリーダー</title>
+    <script src="https://cdn.jsdelivr.net/npm/quagga@0.12.1/dist/quagga.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            font-family: Arial, sans-serif;
+        }
+        #result {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 20px;
+            background-color: #f0f0f0;
+            text-align: center;
+            font-size: 1.2em;
+        }
+        #interactive.viewport {
+            width: 100%;
+            max-width: 640px;
+            height: 480px;
+            position: relative;
+            margin: 20px 0;
+        }
+        #interactive.viewport > canvas, #interactive.viewport > video {
+            max-width: 100%;
+            width: 100%;
+        }
+        #interactive.viewport > canvas.drawingBuffer, #interactive.viewport > video.drawingBuffer {
+            position: absolute;
+            left: 0;
+            top: 0;
+        }
+        .scanner-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.3);
+            z-index: 10;
+        }
+        .scanner-laser {
+            position: absolute;
+            left: 10%;
+            right: 10%;
+            top: 50%;
+            height: 2px;
+            background: red;
+            z-index: 11;
+            box-shadow: 0 0 4px red;
+            animation: scanning 2s infinite;
+        }
+        @keyframes scanning {
+            0% { top: 40%; }
+            50% { top: 60%; }
+            100% { top: 40%; }
+        }
+        .guide-box {
+            position: absolute;
+            left: 10%;
+            right: 10%;
+            top: 30%;
+            bottom: 30%;
+            border: 2px solid #fff;
+            border-radius: 10px;
+            z-index: 11;
+        }
+        #log {
+            width: 100%;
+            max-height: 200px;
+            overflow-y: auto;
+            padding: 10px;
+            background-color: #f0f0f0;
+            border-radius: 5px;
+        }
+        .log-entry {
+            margin: 5px 0;
+            padding: 5px;
+            border-bottom: 1px solid #ddd;
+        }
+    </style>
+</head>
+<body>
+    <div id="result">バーコードをかざしてください</div>
+    <div id="interactive" class="viewport">
+        <div class="scanner-overlay">
+            <div class="guide-box"></div>
+            <div class="scanner-laser"></div>
+        </div>
+    </div>
+    <div id="log"></div>
+
+    <script>
+        console.log('スクリプトを開始します');
+        const resultElement = document.getElementById('result');
+        const logElement = document.getElementById('log');
+        let lastResult = '';
+
+        function addToLog(text) {
+            console.log('ログに追加:', text);
+            const now = new Date();
+            const timestamp = now.toLocaleTimeString();
+            const logEntry = document.createElement('div');
+            logEntry.className = 'log-entry';
+            logEntry.textContent = `${timestamp}: ${text}`;
+            logElement.insertBefore(logEntry, logElement.firstChild);
+        }
+
+        function startScanning() {
+            console.log('startScanning関数を開始します');
+            Quagga.init({
+                inputStream: {
+                    name: "Live",
+                    type: "LiveStream",
+                    target: document.querySelector("#interactive"),
+                    constraints: {
+                        facingMode: "environment",
+                        width: { min: 1280 },
+                        height: { min: 720 },
+                        aspectRatio: { min: 1, max: 2 }
+                    },
+                },
+                decoder: {
+                    readers: [
+                        "ean_reader",
+                        "ean_8_reader",
+                        "code_128_reader",
+                        "code_39_reader",
+                        "upc_reader",
+                        "upc_e_reader",
+                        "codabar_reader",
+                        "i2of5_reader"
+                    ],
+                    debug: {
+                        drawBoundingBox: true,
+                        showFrequency: true,
+                        drawScanline: true,
+                        showPattern: true
+                    }
+                },
+                locate: true,
+                frequency: 10
+            }, function(err) {
+                if (err) {
+                    console.error('Quaggaの初期化に失敗:', err);
+                    resultElement.textContent = 'カメラの起動に失敗しました';
+                    return;
+                }
+                console.log('Quaggaの初期化が完了しました');
+                Quagga.start();
+            });
+
+            let results = [];
+            const requiredMatches = 2; // 同じ結果が必要な回数
+
+            Quagga.onDetected(function(result) {
+                const code = result.codeResult.code;
+                console.log('検出されたコード:', code);
+
+                // 結果の信頼性チェック
+                results.push(code);
+                if (results.length > 5) {
+                    results.shift();
+                }
+
+                // 同じ結果が指定回数以上あるかチェック
+                const matches = results.filter(r => r === code).length;
+                if (matches >= requiredMatches && code !== lastResult) {
+                    lastResult = code;
+                    const format = result.codeResult.format;
+                    resultElement.textContent = `読み取り結果: ${code} (${format})`;
+                    addToLog(`${code} [${format}]`);
+                    console.log('確認されたバーコード:', code, format);
+                }
+            });
+
+            // デバッグ情報の表示
+            Quagga.onProcessed(function(result) {
+                const drawingCtx = Quagga.canvas.ctx.overlay;
+                const drawingCanvas = Quagga.canvas.dom.overlay;
+
+                if (result) {
+                    if (result.boxes) {
+                        drawingCtx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+                        result.boxes.filter(function(box) {
+                            return box !== result.box;
+                        }).forEach(function(box) {
+                            Quagga.ImageDebug.drawPath(box, { x: 0, y: 1 }, drawingCtx, { color: "yellow", lineWidth: 2 });
+                        });
+                    }
+
+                    if (result.box) {
+                        Quagga.ImageDebug.drawPath(result.box, { x: 0, y: 1 }, drawingCtx, { color: "green", lineWidth: 2 });
+                    }
+
+                    if (result.codeResult && result.codeResult.code) {
+                        Quagga.ImageDebug.drawPath(result.line, { x: 'x', y: 'y' }, drawingCtx, { color: "red", lineWidth: 3 });
+                    }
+                }
+            });
+        }
+
+        // ページ読み込み時にスキャンを開始
+        console.log('DOMContentLoadedイベントを待機します');
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log('DOMContentLoadedイベントが発火しました');
+            startScanning();
+        });
+
+        // ページを閉じる時にリソースを解放
+        window.addEventListener('beforeunload', () => {
+            Quagga.stop();
+        });
+    </script>
+</body>
+</html>
