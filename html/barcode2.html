@@ -1,87 +1,141 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Barcode Scanner</title>
+    <meta charset="UTF-8">
+    <title>バーコードスキャナー</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <script src="https://cdn.jsdelivr.net/npm/quagga@0.12.1/dist/quagga.min.js"></script>
     <style>
-        #history {
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        #status-bar {
             position: fixed;
             top: 0;
             left: 0;
             right: 0;
-            background: #f0f0f0;
-            padding: 10px;
-            border-bottom: 1px solid #ccc;
-            max-height: 200px;
-            overflow-y: auto;
+            background: #4CAF50;
+            color: white;
+            padding: 8px;
+            text-align: center;
             z-index: 1000;
+            font-weight: bold;
+            height: 20px;
         }
-        .history-item {
-            padding: 5px;
-            border-bottom: 1px solid #ddd;
-            font-family: monospace;
-        }
-        .history-item:last-child {
-            border-bottom: none;
-        }
-        body {
-            padding-top: 220px;
-        }
-        #interactive.viewport {
-            position: relative;
-            width: 100%;
-            height: 300px;
-        }
-        #interactive.viewport > canvas, #interactive.viewport > video {
-            max-width: 100%;
-            width: 100%;
-        }
-        canvas.drawing, canvas.drawingBuffer {
-            position: absolute;
+        #result-area {
+            position: fixed;
+            top: 36px;
             left: 0;
-            top: 0;
-        }
-        #result {
-            margin-top: 20px;
-            background: #ddd;
+            right: 0;
+            background: #f8f9fa;
             padding: 10px;
-            font-family: monospace;
-        }
-        #frequency-results {
-            margin: 10px 0;
-            padding: 10px;
-            background: #e8e8e8;
-            border-radius: 4px;
-        }
-        .frequency-item {
-            padding: 5px;
-            font-family: monospace;
             border-bottom: 1px solid #ddd;
+            z-index: 999;
         }
-        #analyzeButton {
-            margin: 10px 0;
-            padding: 8px 16px;
+        #latest-result {
+            font-size: 24px;
+            font-weight: bold;
+            text-align: center;
+            margin: 5px 0;
+            font-family: monospace;
+            min-height: 30px;
+        }
+        #analysis-button {
+            width: 100%;
+            padding: 10px;
             background: #007bff;
             color: white;
             border: none;
-            border-radius: 4px;
-            cursor: pointer;
+            border-radius: 5px;
+            font-size: 14px;
+            margin: 5px 0;
         }
-        #analyzeButton:hover {
-            background: #0056b3;
+        #analysis-button:disabled {
+            background: #ccc;
+        }
+        #analysis-results {
+            margin-top: 5px;
+            padding: 5px;
+            background: white;
+            border-radius: 5px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            max-height: 100px;
+            overflow-y: auto;
+        }
+        .frequency-item {
+            padding: 5px;
+            border-bottom: 1px solid #eee;
+            font-family: monospace;
+            font-size: 14px;
+        }
+        .frequency-item:first-child {
+            background: #e8f5e9;
+            font-weight: bold;
+        }
+        #interactive.viewport {
+            position: fixed;
+            top: 160px;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: #000;
+        }
+        #interactive.viewport > canvas, #interactive.viewport > video {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+        .scanning-indicator {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 200px;
+            height: 2px;
+            background: #4CAF50;
+            animation: scan 2s infinite;
+            z-index: 1001;
+        }
+        @keyframes scan {
+            0% { transform: translate(-50%, -50%) scaleX(0); opacity: 0; }
+            50% { transform: translate(-50%, -50%) scaleX(1); opacity: 1; }
+            100% { transform: translate(-50%, -50%) scaleX(0); opacity: 0; }
+        }
+        .frequency-item {
+            position: relative;
+            padding: 5px;
+            margin: 2px 0;
+            background: #f8f9fa;
+            border-radius: 3px;
+            z-index: 1;
+        }
+        .progress-bar {
+            position: absolute;
+            top: 0;
+            left: 0;
+            height: 100%;
+            background: rgba(76, 175, 80, 0.1);
+            z-index: -1;
+            border-radius: 3px;
+            transition: width 0.3s ease;
         }
     </style>
 </head>
 <body>
-    <div id="history">
-        <h2>Scan History</h2>
-        <button id="analyzeButton">Start 5-sec Analysis</button>
-        <div id="frequency-results"></div>
-        <div id="history-list"></div>
+    <div id="status-bar">バーコードをかざしてください</div>
+    <div id="result-area">
+        <div id="latest-result">バーコード読取待ち</div>
+        <button id="analysis-button">5秒間の分析を開始</button>
+        <div id="analysis-results"></div>
     </div>
-    <h1>Barcode Scanner</h1>
+    <div class="scanning-indicator"></div>
     <div id="interactive" class="viewport"></div>
-    <div id="result">Scanning...</div>
 
     <script>
         // EAN-13チェックデジット検証関数を先に定義
@@ -107,6 +161,8 @@
         // 5秒間の分析用の変数
         let isAnalyzing = false;
         let analysisData = [];
+        const MIN_CONFIDENCE_COUNT = 5;  // 最小信頼度
+        const AUTO_COMPLETE_COUNT = 10;  // 自動完了の閾値
 
         Quagga.init({
             inputStream: {
@@ -140,55 +196,105 @@
             Quagga.start();
         });
 
+        // ステータス表示の更新
+        function updateStatus(text) {
+            document.getElementById('status-bar').textContent = text;
+        }
+
+        // 最新の読み取り結果を表示
+        function updateLatestResult(code) {
+            document.getElementById('latest-result').textContent = code;
+        }
+
+        function startAnalysis() {
+            const button = document.getElementById('analysis-button');
+            const resultsDiv = document.getElementById('analysis-results');
+            const latestResult = document.getElementById('latest-result');
+            
+            // 分析開始時に表示をクリア
+            resultsDiv.innerHTML = '';
+            latestResult.textContent = '分析中...';
+            
+            button.disabled = true;
+            button.textContent = '分析中... (5秒)';
+            updateStatus('集中分析中...');
+            isAnalyzing = true;
+            analysisData = [];
+
+            setTimeout(() => {
+                if (isAnalyzing) {  // まだ分析中の場合のみ
+                    isAnalyzing = false;
+                    analyzeResults(true);  // 最終結果として表示
+                    button.disabled = false;
+                    button.textContent = '5秒間の分析を開始';
+                    updateStatus('バーコードをかざしてください');
+                }
+            }, 5000);
+        }
+
+        function analyzeResults(isFinal = false) {
+            let frequency = {};
+            analysisData.forEach(code => {
+                frequency[code] = (frequency[code] || 0) + 1;
+            });
+
+            let sortedResults = Object.entries(frequency)
+                .sort((a, b) => b[1] - a[1]);
+
+            const latestResult = document.getElementById('latest-result');
+            const resultsDiv = document.getElementById('analysis-results');
+
+            if (sortedResults.length > 0) {
+                const [topCode, topCount] = sortedResults[0];
+                const percentage = (topCount / analysisData.length * 100).toFixed(1);
+
+                // 信頼度チェックと表示
+                if (topCount < MIN_CONFIDENCE_COUNT) {
+                    latestResult.textContent = '信頼度が低いです。再度読み取りしてください';
+                    latestResult.style.color = '#ff4444';
+                    latestResult.style.fontSize = '16px';
+                } else {
+                    latestResult.textContent = topCode;
+                    latestResult.style.color = '#000';
+                    latestResult.style.fontSize = '24px';
+
+                    // 10回を超えた場合、分析を自動終了
+                    if (!isFinal && topCount >= AUTO_COMPLETE_COUNT) {
+                        isAnalyzing = false;
+                        document.getElementById('analysis-button').disabled = false;
+                        document.getElementById('analysis-button').textContent = '5秒間の分析を開始';
+                        updateStatus('バーコードをかざしてください');
+                    }
+                }
+
+                // リアルタイムで詳細な分析結果を表示
+                resultsDiv.innerHTML = `
+                    <div style="margin-bottom: 8px">総スキャン回数: ${analysisData.length}回</div>
+                    ${sortedResults.map(([code, count]) => {
+                        const pct = (count / analysisData.length * 100).toFixed(1);
+                        return `<div class="frequency-item">
+                            ${code}: ${count}回 (${pct}%)
+                            <div class="progress-bar" style="width: ${pct}%"></div>
+                        </div>`;
+                    }).join('')}
+                `;
+            } else {
+                latestResult.textContent = 'スキャンデータなし';
+                latestResult.style.color = '#000';
+                latestResult.style.fontSize = '24px';
+                resultsDiv.innerHTML = '';
+            }
+        }
+
+        document.getElementById('analysis-button').addEventListener('click', startAnalysis);
+
         Quagga.onDetected(function(result) {
             var code = result.codeResult.code;
             
-            if (validateEAN13(code)) {
-                // 分析中なら結果を記録
-                if (isAnalyzing) {
-                    analysisData.push(code);
-                }
-
-                // 最近のスキャン結果に追加
-                recentScans.push({
-                    code: code,
-                    timestamp: Date.now()
-                });
-
-                // 古いスキャン結果を削除
-                const now = Date.now();
-                recentScans = recentScans.filter(scan => 
-                    now - scan.timestamp < SCAN_PERIOD
-                );
-
-                // 最も頻出するコードを確認
-                let counts = {};
-                recentScans.forEach(scan => {
-                    counts[scan.code] = (counts[scan.code] || 0) + 1;
-                });
-
-                // 必要な一致数を超えたコードがあるか確認
-                for (let detectedCode in counts) {
-                    if (counts[detectedCode] >= REQUIRED_MATCHES && detectedCode !== lastResult) {
-                        lastResult = detectedCode;
-                        var format = result.codeResult.format;
-                        var resultDiv = document.getElementById('result');
-                        resultDiv.textContent = `Detected ${format}: ${detectedCode} (Verified)`;
-                        console.log("Verified barcode detected: [" + detectedCode + "]");
-
-                        // 履歴に追加
-                        const timestamp = new Date().toLocaleTimeString();
-                        scanHistory.unshift(`${timestamp}: ${format} - ${detectedCode}`);
-                        if (scanHistory.length > MAX_HISTORY) {
-                            scanHistory.pop();
-                        }
-                        updateHistory();
-
-                        // 一時保存配列をクリア
-                        recentScans = [];
-                        break;
-                    }
-                }
+            if (isAnalyzing && validateEAN13(code)) {
+                analysisData.push(code);
+                analyzeResults();  // リアルタイムで結果を更新
+                console.log("Processing succeeded:", code);
             }
         });
 
@@ -206,87 +312,6 @@
                 console.log("Processing succeeded:", result.codeResult.code);
             }
         });
-
-        // 分析開始関数
-        function startAnalysis() {
-            const analyzeButton = document.getElementById('analyzeButton');
-            analyzeButton.disabled = true;
-            analyzeButton.textContent = 'Analyzing... (5s)';
-            isAnalyzing = true;
-            analysisData = [];
-
-            // 5秒後に分析を終了
-            setTimeout(() => {
-                isAnalyzing = false;
-                analyzeResults();
-                analyzeButton.disabled = false;
-                analyzeButton.textContent = 'Start 5-sec Analysis';
-            }, 5000);
-        }
-
-        // 結果分析関数
-        function analyzeResults() {
-            let frequency = {};
-            
-            // 頻度を計算
-            analysisData.forEach(code => {
-                frequency[code] = (frequency[code] || 0) + 1;
-            });
-
-            // 頻度順にソート
-            let sortedResults = Object.entries(frequency)
-                .sort((a, b) => b[1] - a[1])
-                .map(([code, count]) => {
-                    const percentage = (count / analysisData.length * 100).toFixed(1);
-                    return `${code}: ${count} times (${percentage}%)`;
-                });
-
-            // 結果を表示
-            const frequencyDiv = document.getElementById('frequency-results');
-            if (sortedResults.length > 0) {
-                frequencyDiv.innerHTML = `
-                    <h3>5-Second Analysis Results</h3>
-                    <p>Total scans: ${analysisData.length}</p>
-                    ${sortedResults.map(result => 
-                        `<div class="frequency-item">${result}</div>`
-                    ).join('')}
-                `;
-            } else {
-                frequencyDiv.innerHTML = '<h3>No scans detected in 5 seconds</h3>';
-            }
-        }
-
-        // ボタンにイベントリスナーを追加
-        document.getElementById('analyzeButton').addEventListener('click', startAnalysis);
-
-        // スタイルを追加
-        const style = document.createElement('style');
-        style.textContent = `
-            #frequency-results {
-                margin: 10px 0;
-                padding: 10px;
-                background: #e8e8e8;
-                border-radius: 4px;
-            }
-            .frequency-item {
-                padding: 5px;
-                font-family: monospace;
-                border-bottom: 1px solid #ddd;
-            }
-            #analyzeButton {
-                margin: 10px 0;
-                padding: 8px 16px;
-                background: #007bff;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                cursor: pointer;
-            }
-            #analyzeButton:hover {
-                background: #0056b3;
-            }
-        `;
-        document.head.appendChild(style);
     </script>
 </body>
 </html>
