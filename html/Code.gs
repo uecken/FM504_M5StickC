@@ -4,24 +4,36 @@
  * スプレッドシートからRFIDリストを取得する関数
  */
 function getRFIDList() {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('RFIDData'); // シート名を適宜変更してください
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('RFIDData');
   if (!sheet) {
     throw new Error('RFIDData シートが見つかりません。');
   }
   
   const dataRange = sheet.getDataRange();
   const data = dataRange.getValues();
+  const headers = data[0];
+  const janCodeIndex = headers.findIndex(header => header === 'JANコード');
+  
+  // デバッグログ
+  Logger.log('Headers:', headers);
+  Logger.log('JAN Code Index:', janCodeIndex);
   
   // 1行目をヘッダーとして除外
-  const rfidList = data.slice(1).map(row => ({
-    timestamp: row[0] instanceof Date ? row[0].toISOString() : String(row[0]),
-    rfid: String(row[1]),
-    maker: String(row[2]),
-    category: String(row[3]),
-    name: String(row[4])
-  })).filter(item => item.rfid); // RFIDが空でないものをフィルタリング
+  const rfidList = data.slice(1).map(row => {
+    // デバッグログ
+    Logger.log('Row data:', row);
+    return {
+      timestamp: row[0] instanceof Date ? row[0].toISOString() : String(row[0]),
+      rfid: String(row[1]),
+      maker: String(row[2]),
+      category: String(row[3]),
+      name: String(row[4]),
+      janCode: janCodeIndex !== -1 ? String(row[5]) : '' // JANコードは6列目（インデックス5）にある
+    };
+  }).filter(item => item.rfid); // RFIDが空でないものをフィルタリング
   
-  Logger.log('RFID List: ' + JSON.stringify(rfidList)); // デバッグ用ログ
+  // デバッグログ
+  Logger.log('RFID List:', JSON.stringify(rfidList));
   
   return rfidList;
 }
@@ -31,7 +43,7 @@ function getRFIDList() {
  * @param {Object} form - フォームデータ
  */
 function processForm(form) {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('RFIDData'); // シート名を適宜変更してください
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('RFIDData');
   if (!sheet) {
     throw new Error('RFIDData シートが見つかりません。');
   }
@@ -43,7 +55,9 @@ function processForm(form) {
   // スプレッドシートの全RFIDを取得してマップを作成
   const dataRange = sheet.getDataRange();
   const data = dataRange.getValues();
+  const headers = data[0];
   const existingRFIDs = {};
+  
   for (let i = 1; i < data.length; i++) { // 1行目はヘッダー
     const rfid = String(data[i][1]).trim();
     if (rfid) {
@@ -65,8 +79,8 @@ function processForm(form) {
           timestamp: timestamp
         });
       } else {
-        // 新しいRFIDとして追加
-        newEntries.push([timestamp, rfid]);
+        // 新しいRFIDとして追加（空のJANコードフィールドを含む）
+        newEntries.push([timestamp, rfid, '', '', '', '']); // タイムスタンプ, RFID, メーカー, カテゴリ, 名称, JANコード
       }
     }
   });
@@ -119,4 +133,60 @@ function deleteRFIDs(selectedRFIDs) {
 function doGet(e) {
   return HtmlService.createHtmlOutputFromFile('index') // デフォルトで登録フォームを表示
       .setTitle('RFID管理システム');
+}
+
+/**
+ * JANコードからRFIDを検索する関数
+ * @param {string} janCode - 検索するJANコード
+ * @returns {Array} - 見つかったRFIDのデータの配列
+ */
+function searchRFIDByJAN(janCode) {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('RFIDData');
+  if (!sheet) {
+    throw new Error('RFIDData シートが見つかりません。');
+  }
+  
+  const dataRange = sheet.getDataRange();
+  const data = dataRange.getValues();
+  
+  // JANコードの列のインデックスを取得（ヘッダー行から）
+  const headers = data[0];
+  const janCodeIndex = headers.findIndex(header => header === 'JANコード');
+  
+  // デバッグログ
+  Logger.log('Headers:', headers);
+  Logger.log('JAN Code Index:', janCodeIndex);
+  Logger.log('Searching for JAN code:', janCode);
+  
+  if (janCodeIndex === -1) {
+    throw new Error('JANコードの列が見つかりません。');
+  }
+  
+  // JANコードに一致する行を全て検索
+  const results = [];
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    const currentJANCode = String(row[janCodeIndex]).trim();
+    Logger.log(`Row ${i}: JAN code = ${currentJANCode}`);
+    
+    if (currentJANCode === String(janCode).trim()) {
+      Logger.log('Match found in row:', i);
+      const result = {
+        timestamp: row[0] instanceof Date ? row[0].toISOString() : String(row[0]),
+        rfid: String(row[1]),
+        maker: String(row[2]),
+        category: String(row[3]),
+        name: String(row[4]),
+        janCode: currentJANCode
+      };
+      Logger.log('Adding result:', result);
+      results.push(result);
+    }
+  }
+  
+  Logger.log('Total results found:', results.length);
+  Logger.log('Search results:', JSON.stringify(results));
+  
+  // 必ず配列を返す
+  return results.length > 0 ? results : [];
 }

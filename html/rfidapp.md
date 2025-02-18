@@ -1,5 +1,19 @@
 # RFID管理システム フローチャート
 
+
+# 主機能
+1. JANコードとRFIDを読み取り、スプレッドシートに登録する機能
+2. スプレッドシートかRFIDやJANコードを読み取り表にする機能
+3. JANコードを指定し、対応するRFIDをRFIDリーダで探索できる機能
+
+スプレッドシートのフィールドと一例
+登録時間	RFID ID(EPC)	メーカー	カテゴリ	名称	JANコード
+2024-11-06T08:09:53.774Z	E2806F12000000021FC2FF63	ユニクロ	ニット・セーター	ニット・セーター１	
+
+## ファイル
+rfidapp.html
+Code.gs
+
 ## 現状の実装内容
 ### 実装済み機能
 - RFID読み取り機能（24文字固定長）
@@ -81,3 +95,10 @@ flowchart LR
     B -->|表示| D[ブラウザ]
     D -->|操作| B
 ```
+
+
+Sheet
+https://docs.google.com/spreadsheets/d/1DpijamOOnYjeZB7M8hEKt2DzRaiL5Xr0lKqTeKPxwjs/edit?gid=0#gid=0
+
+Script
+https://script.google.com/home/projects/11oV1ObMjEXsnHkKIdF5QpaBFVMqPdVmRZgnHtgeW-N1DrZhDKpbLiGge/edit

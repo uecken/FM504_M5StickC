@@ -208,6 +208,7 @@
     <div style="text-align: center; margin-bottom: 20px;">
       <button type="button" class="btn" onclick="switchMode('registration')" aria-label="登録モードに切り替える">登録モード</button>
       <button type="button" class="btn btn-cancel" onclick="switchMode('query')" aria-label="照会モードに切り替える">照会モード</button>
+      <button type="button" class="btn btn-yellow" onclick="switchMode('janSearch')" aria-label="JAN検索モードに切り替える">JAN検索モード</button>
       <button type="button" class="btn btn-yellow" onclick="window.open('https://docs.google.com/spreadsheets/d/1DpijamOOnYjeZB7M8hEKt2DzRaiL5Xr0lKqTeKPxwjs/edit?gid=0#gid=0', '_blank')" aria-label="スプレッドシートを参照">スプレッドシートを参照</button>
       <button type="button" id="activeMode" class="btn btn-active-on" onclick="toggleActiveMode()" aria-label="アクティブモードを切り替える">アクティブモード: ON</button>
     </div>
@@ -260,6 +261,12 @@
     <!-- 照会モード用セクション -->
     <div id="querySection" style="display:none;">
       <h2>照会</h2>
+      <!-- JANコード検索フォームを追加 -->
+      <div style="margin: 20px 0;">
+        <label for="queryJanCode">JANコードで検索:</label>
+        <input type="text" id="queryJanCode" class="form-control" style="padding: 10px; font-size: 16px; width: 200px;" placeholder="JANコードを入力">
+        <button type="button" class="btn" onclick="searchAndCheckByJAN()" aria-label="JANコードで検索">検索</button>
+      </div>
       <!-- RFIDリストを表示するテーブル -->
       <table id="rfidTable">
         <thead>
@@ -269,6 +276,7 @@
             <th>メーカー</th>
             <th>カテゴリ</th>
             <th>名称</th>
+            <th>JANコード</th>
             <th>発見</th>
             <th>選択</th>
           </tr>
@@ -307,6 +315,32 @@
       エラーが発生しました。コンソールを確認してください。
     </div>
     
+    <!-- JAN検索モード用セクション -->
+    <div id="janSearchSection" style="display:none;">
+      <h2>JANコードによるRFID探索</h2>
+      <div style="margin: 20px 0;">
+        <label for="janCode">JANコード:</label>
+        <input type="text" id="janCode" class="form-control" style="padding: 10px; font-size: 16px; width: 200px;" placeholder="JANコードを入力">
+        <button type="button" class="btn" onclick="searchByJAN()" aria-label="JANコードで検索">検索</button>
+      </div>
+      <div id="janSearchResult" style="margin-top: 20px;">
+        <table id="janResultTable" style="display: none;">
+          <thead>
+            <tr>
+              <th>RFID ID</th>
+              <th>メーカー</th>
+              <th>カテゴリ</th>
+              <th>名称</th>
+              <th>JANコード</th>
+              <th>ステータス</th>
+            </tr>
+          </thead>
+          <tbody id="janResultBody">
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <script>
       const RFID_LENGTH = 24; // RFID IDの固定長
       let allUniqueRFIDs = []; // 全体のユニークなRFID IDのリスト
@@ -317,23 +351,22 @@
 
       // モードを切り替える関数
       function switchMode(mode) {
+        document.getElementById('registerSection').style.display = 'none';
+        document.getElementById('querySection').style.display = 'none';
+        document.getElementById('janSearchSection').style.display = 'none';
+        document.getElementById('myForm').style.display = 'block';
+        document.getElementById('successMessage').style.display = 'none';
+        document.getElementById('querySuccessMessage').style.display = 'none';
+        document.getElementById('queryNotFoundMessage').style.display = 'none';
+        document.getElementById('errorMessage').style.display = 'none';
+
         if (mode === 'registration') {
           document.getElementById('registerSection').style.display = 'block';
-          document.getElementById('querySection').style.display = 'none';
-          document.getElementById('myForm').style.display = 'block';
-          document.getElementById('successMessage').style.display = 'none';
-          document.getElementById('querySuccessMessage').style.display = 'none';
-          document.getElementById('queryNotFoundMessage').style.display = 'none';
-          document.getElementById('errorMessage').style.display = 'none';
         } else if (mode === 'query') {
-          document.getElementById('registerSection').style.display = 'none';
           document.getElementById('querySection').style.display = 'block';
-          document.getElementById('myForm').style.display = 'block'; // 入力フォームは共有
-          document.getElementById('successMessage').style.display = 'none';
-          document.getElementById('querySuccessMessage').style.display = 'none';
-          document.getElementById('queryNotFoundMessage').style.display = 'none';
-          document.getElementById('errorMessage').style.display = 'none';
-          loadRFIDList(); // 照会モードに切り替えた際にRFIDリストを取得
+          loadRFIDList(); // 照会モードに切り替えた際にRFIDリストを読み込む
+        } else if (mode === 'janSearch') {
+          document.getElementById('janSearchSection').style.display = 'block';
         }
       }
 
@@ -489,6 +522,11 @@
           const nameCell = document.createElement('td');
           nameCell.textContent = item.name;
           row.appendChild(nameCell);
+
+          // JANコードセル
+          const janCodeCell = document.createElement('td');
+          janCodeCell.textContent = item.janCode || '';
+          row.appendChild(janCodeCell);
 
           // 発見マークセル（初期は空）
           const foundCell = document.createElement('td');
@@ -882,6 +920,122 @@
           button.classList.remove('btn-active-on');
           button.classList.add('btn-active-off');
           document.getElementById("rfidData").blur(); // フォーカスを外す
+        }
+      }
+
+      // JANコードによる検索機能
+      function searchByJAN() {
+        const janCode = document.getElementById('janCode').value.trim();
+        if (!janCode) {
+          alert('JANコードを入力してください。');
+          return;
+        }
+
+        console.log('Searching for JAN code:', janCode);
+
+        google.script.run
+          .withSuccessHandler(function(results) {
+            console.log('Search results received:', results);
+            const table = document.getElementById('janResultTable');
+            const tbody = document.getElementById('janResultBody');
+            tbody.innerHTML = '';
+
+            // 結果が配列でない場合は配列に変換
+            let resultsArray = results;
+            if (results && !Array.isArray(results)) {
+              resultsArray = [results];
+            }
+
+            if (resultsArray && resultsArray.length > 0) {
+              console.log('Found', resultsArray.length, 'matching records');
+              table.style.display = 'table';
+              
+              resultsArray.forEach((result, index) => {
+                console.log('Processing result', index + 1, ':', result);
+                const row = tbody.insertRow();
+                row.insertCell(0).textContent = result.rfid;
+                row.insertCell(1).textContent = result.maker;
+                row.insertCell(2).textContent = result.category;
+                row.insertCell(3).textContent = result.name;
+                row.insertCell(4).textContent = result.janCode;
+                row.insertCell(5).textContent = '未発見';
+
+                // 各RFIDに対するスキャン検出を設定
+                const rfid = result.rfid;
+                const statusCell = row.cells[5];
+                
+                // 既存のイベントリスナーを削除（もしあれば）
+                const oldListener = row.getAttribute('data-listener');
+                if (oldListener) {
+                  document.getElementById('rfidData').removeEventListener('input', window[oldListener]);
+                }
+
+                // 新しいイベントリスナーを作成
+                const listenerName = 'rfidListener_' + rfid;
+                window[listenerName] = function(e) {
+                  const scannedRFID = e.target.value.trim();
+                  if (scannedRFID === rfid) {
+                    statusCell.textContent = '発見！';
+                    statusCell.style.color = 'green';
+                    statusCell.style.fontWeight = 'bold';
+                    beep();
+                  }
+                };
+
+                // イベントリスナーを設定
+                document.getElementById('rfidData').addEventListener('input', window[listenerName]);
+                row.setAttribute('data-listener', listenerName);
+              });
+            } else {
+              console.log('No matching records found');
+              table.style.display = 'none';
+              alert('指定されたJANコードに対応するRFIDが見つかりませんでした。');
+            }
+          })
+          .withFailureHandler(function(error) {
+            console.error('Search failed:', error);
+            alert('エラーが発生しました: ' + error);
+          })
+          .searchRFIDByJAN(janCode);
+      }
+
+      // JANコードで検索して該当するレコードをチェックする関数
+      function searchAndCheckByJAN() {
+        const janCode = document.getElementById('queryJanCode').value.trim();
+        if (!janCode) {
+          alert('JANコードを入力してください。');
+          return;
+        }
+
+        // まず全てのチェックボックスを解除
+        const checkboxes = document.querySelectorAll('#rfidBody input[type="checkbox"]');
+        checkboxes.forEach(cb => cb.checked = false);
+
+        // JANコードに一致するレコードを探してチェック
+        let found = false;
+        const rows = document.getElementById('rfidBody').getElementsByTagName('tr');
+        for (let i = 0; i < rows.length; i++) {
+          const janCodeCell = rows[i].getElementsByTagName('td')[5]; // JANコードは6番目のセル
+          const checkbox = rows[i].querySelector('input[type="checkbox"]');
+          
+          if (janCodeCell.textContent.trim() === janCode) {
+            checkbox.checked = true;
+            found = true;
+            // 該当行をハイライト
+            rows[i].style.backgroundColor = '#e6ffe6';
+            setTimeout(() => {
+              rows[i].style.backgroundColor = '';
+            }, 2000); // 2秒後にハイライトを解除
+          } else {
+            rows[i].style.backgroundColor = '';
+          }
+        }
+
+        if (!found) {
+          alert('指定されたJANコードに一致するRFIDが見つかりませんでした。');
+        } else {
+          // 成功メッセージを表示
+          showQuerySuccessMessage();
         }
       }
     </script>
