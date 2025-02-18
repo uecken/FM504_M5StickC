@@ -235,6 +235,20 @@
     <!-- 登録モード用プレビュー表示セクション -->
     <div id="registerSection" style="display:none;">
       <h2>登録したいRFIDリスト</h2>
+      <!-- JANコード入力フォームを追加 -->
+      <div style="margin: 20px 0;">
+        <label for="registerJanCode">JANコード:</label>
+        <input type="text" id="registerJanCode" class="form-control" style="padding: 10px; font-size: 16px; width: 200px;" placeholder="JANコードを入力">
+        <button type="button" class="btn btn-yellow" onclick="startCameraAnalysis('register')" aria-label="カメラでJANコードを読み取る">カメラで読取</button>
+      </div>
+      <!-- カメラビュー用のコンテナ -->
+      <div id="registerCameraContainer" style="display: none; margin: 20px 0;">
+        <div id="register-status-bar" style="background: #4CAF50; color: white; padding: 8px; text-align: center; margin-bottom: 10px;">バーコードをかざしてください</div>
+        <div id="register-result-area">
+          <div id="register-latest-result" style="font-size: 24px; font-weight: bold; text-align: center; margin: 5px 0; font-family: monospace;"></div>
+        </div>
+        <div id="register-interactive" class="viewport" style="width: 100%; height: 300px; background: #000;"></div>
+      </div>
       <table id="previewTable">
         <thead>
           <tr>
@@ -266,6 +280,15 @@
         <label for="queryJanCode">JANコードで検索:</label>
         <input type="text" id="queryJanCode" class="form-control" style="padding: 10px; font-size: 16px; width: 200px;" placeholder="JANコードを入力">
         <button type="button" class="btn" onclick="searchAndCheckByJAN()" aria-label="JANコードで検索">検索</button>
+        <button type="button" class="btn btn-yellow" onclick="startCameraAnalysis('query')" aria-label="カメラでJANコードを読み取る">カメラで読取</button>
+      </div>
+      <!-- カメラビュー用のコンテナ -->
+      <div id="queryCameraContainer" style="display: none; margin: 20px 0;">
+        <div id="query-status-bar" style="background: #4CAF50; color: white; padding: 8px; text-align: center; margin-bottom: 10px;">バーコードをかざしてください</div>
+        <div id="query-result-area">
+          <div id="query-latest-result" style="font-size: 24px; font-weight: bold; text-align: center; margin: 5px 0; font-family: monospace;"></div>
+        </div>
+        <div id="query-interactive" class="viewport" style="width: 100%; height: 300px; background: #000;"></div>
       </div>
       <!-- RFIDリストを表示するテーブル -->
       <table id="rfidTable">
@@ -341,6 +364,7 @@
       </div>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/quagga@0.12.1/dist/quagga.min.js"></script>
     <script>
       const RFID_LENGTH = 24; // RFID IDの固定長
       let allUniqueRFIDs = []; // 全体のユニークなRFID IDのリスト
@@ -1037,6 +1061,100 @@
           // 成功メッセージを表示
           showQuerySuccessMessage();
         }
+      }
+
+      // カメラ分析を開始する関数
+      function startCameraAnalysis(mode) {
+        const config = {
+          inputStream: {
+            name: "Live",
+            type: "LiveStream",
+            target: document.querySelector(`#${mode}-interactive`),
+            constraints: {
+              facingMode: "environment",
+              width: 1280,
+              height: 720,
+            },
+          },
+          locate: true,
+          numOfWorkers: navigator.hardwareConcurrency || 4,
+          decoder: {
+            readers: ["ean_reader"],
+            multiple: false,
+            debug: true,
+            frequency: 10
+          },
+          locator: {
+            patchSize: "medium",
+            halfSample: true
+          }
+        };
+
+        // カメラコンテナを表示
+        document.getElementById(`${mode}CameraContainer`).style.display = 'block';
+
+        let analysisData = [];
+        let isAnalyzing = true;
+
+        Quagga.init(config, function(err) {
+          if (err) {
+            console.error('カメラの初期化に失敗しました:', err);
+            alert('カメラの初期化に失敗しました。');
+            return;
+          }
+          console.log("カメラの初期化に成功しました");
+          Quagga.start();
+        });
+
+        // バーコード検出時のハンドラー
+        Quagga.onDetected(function(result) {
+          const code = result.codeResult.code;
+          if (validateEAN13(code)) {
+            document.getElementById(`${mode}-latest-result`).textContent = code;
+            analysisData.push(code);
+          }
+        });
+
+        // 5秒後に分析を終了
+        setTimeout(() => {
+          if (isAnalyzing) {
+            isAnalyzing = false;
+            Quagga.stop();
+            document.getElementById(`${mode}CameraContainer`).style.display = 'none';
+
+            // 最頻出のJANコードを特定
+            const frequency = {};
+            analysisData.forEach(code => {
+              frequency[code] = (frequency[code] || 0) + 1;
+            });
+
+            const sortedResults = Object.entries(frequency)
+              .sort((a, b) => b[1] - a[1]);
+
+            if (sortedResults.length > 0) {
+              const [topCode, topCount] = sortedResults[0];
+              // 対応するテキストボックスに入力
+              document.getElementById(`${mode}JanCode`).value = topCode;
+              
+              // 照会モードの場合は自動的に検索を実行
+              if (mode === 'query') {
+                searchAndCheckByJAN();
+              }
+            }
+          }
+        }, 5000);
+      }
+
+      // EAN-13チェックデジット検証関数
+      function validateEAN13(code) {
+        if (code.length !== 13) return false;
+        
+        let sum = 0;
+        for (let i = 0; i < 12; i++) {
+          sum += parseInt(code[i]) * (i % 2 === 0 ? 1 : 3);
+        }
+        const checkDigit = (10 - (sum % 10)) % 10;
+        return checkDigit === parseInt(code[12]);
       }
     </script>
   </body>
