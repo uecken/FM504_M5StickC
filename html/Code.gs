@@ -1,5 +1,3 @@
-// Code.gs
-
 /**
  * スプレッドシートからRFIDリストを取得する関数
  */
@@ -12,11 +10,9 @@ function getRFIDList() {
   const dataRange = sheet.getDataRange();
   const data = dataRange.getValues();
   const headers = data[0];
-  const janCodeIndex = headers.findIndex(header => header === 'JANコード');
   
   // デバッグログ
   Logger.log('Headers:', headers);
-  Logger.log('JAN Code Index:', janCodeIndex);
   
   // 1行目をヘッダーとして除外
   const rfidList = data.slice(1).map(row => {
@@ -24,11 +20,12 @@ function getRFIDList() {
     Logger.log('Row data:', row);
     return {
       timestamp: row[0] instanceof Date ? row[0].toISOString() : String(row[0]),
-      rfid: String(row[1]),
-      maker: String(row[2]),
-      category: String(row[3]),
-      name: String(row[4]),
-      janCode: janCodeIndex !== -1 ? String(row[5]) : '' // JANコードは6列目（インデックス5）にある
+      productInfo: String(row[1]),
+      janCode: String(row[2]),
+      rfid: String(row[3]),
+      maker: String(row[4]),
+      category: String(row[5]),
+      name: String(row[6])
     };
   }).filter(item => item.rfid); // RFIDが空でないものをフィルタリング
   
@@ -43,59 +40,68 @@ function getRFIDList() {
  * @param {Object} form - フォームデータ
  */
 function processForm(form) {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('RFIDData');
-  if (!sheet) {
-    throw new Error('RFIDData シートが見つかりません。');
-  }
-  
-  const rfidData = form.rfidData;
-  const now = new Date();
-  const timestamp = now.toISOString();
-
-  // スプレッドシートの全RFIDを取得してマップを作成
-  const dataRange = sheet.getDataRange();
-  const data = dataRange.getValues();
-  const headers = data[0];
-  const existingRFIDs = {};
-  
-  for (let i = 1; i < data.length; i++) { // 1行目はヘッダー
-    const rfid = String(data[i][1]).trim();
-    if (rfid) {
-      existingRFIDs[rfid] = i + 1; // 行番号（1-based）
+  try {
+    const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('RFIDData');
+    if (!sheet) {
+      throw new Error('RFIDData シートが見つかりません。');
     }
-  }
 
-  // トランザクションを使用して一括処理
-  const updates = [];
-  const newEntries = [];
+    const now = new Date();
+    const timestamp = Utilities.formatDate(now, 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
 
-  rfidData.forEach(rfid => {
-    rfid = String(rfid).trim();
-    if (rfid) {
-      if (existingRFIDs.hasOwnProperty(rfid)) {
-        // 既存のRFIDのタイムスタンプを更新
-        updates.push({
-          row: existingRFIDs[rfid],
-          timestamp: timestamp
-        });
-      } else {
-        // 新しいRFIDとして追加（空のJANコードフィールドを含む）
-        newEntries.push([timestamp, rfid, '', '', '', '']); // タイムスタンプ, RFID, メーカー, カテゴリ, 名称, JANコード
-      }
+    // デバッグログ
+    Logger.log('Received form data:', JSON.stringify(form));
+    Logger.log('RFID Data:', form.rfidData);
+
+    // 新規エントリの作成
+    const newEntries = [];
+    form.rfidData.forEach(entry => {
+      // 各フィールドを個別に取得して検証
+      const productInfo = entry.productInfo || '';
+      const janCode = entry.janCode;
+      const rfid = entry.rfid;
+      const maker = entry.maker;
+      const category = entry.category;
+      const name = entry.name;
+
+      // デバッグログ
+      Logger.log('Processing entry:', {
+        timestamp: timestamp,
+        productInfo: productInfo,
+        janCode: janCode,
+        rfid: rfid,
+        maker: maker,
+        category: category,
+        name: name
+      });
+
+      // 新しいRFIDとして追加
+      newEntries.push([
+        timestamp,    // Timestamp
+        productInfo,  // 商品情報
+        janCode,      // JANcode
+        rfid,         // RFID_EPC
+        maker,        // Vendor
+        category,     // Category
+        name          // Name
+      ]);
+    });
+
+    // デバッグログ
+    Logger.log('Entries to be added:', newEntries);
+
+    // 新規RFIDの追加
+    if (newEntries.length > 0) {
+      const lastRow = sheet.getLastRow();
+      sheet.getRange(lastRow + 1, 1, newEntries.length, 7).setValues(newEntries);
+      Logger.log('Successfully added entries at row:', lastRow + 1);
     }
-  });
 
-  // タイムスタンプの更新
-  updates.forEach(update => {
-    sheet.getRange(update.row, 1).setValue(update.timestamp);
-  });
-
-  // 新規RFIDの追加
-  if (newEntries.length > 0) {
-    sheet.getRange(sheet.getLastRow() + 1, 1, newEntries.length, newEntries[0].length).setValues(newEntries);
+    return '成功';
+  } catch (error) {
+    Logger.log('Error in processForm:', error.toString());
+    throw new Error('データの処理中にエラーが発生しました: ' + error.message);
   }
-
-  return '成功';
 }
 
 /**
@@ -103,7 +109,7 @@ function processForm(form) {
  * @param {Array} selectedRFIDs - 削除するRFIDの配列
  */
 function deleteRFIDs(selectedRFIDs) {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('RFIDData'); // シート名を適宜変更してください
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('RFIDData');
   if (!sheet) {
     throw new Error('RFIDData シートが見つかりません。');
   }
@@ -112,7 +118,8 @@ function deleteRFIDs(selectedRFIDs) {
   const data = dataRange.getValues();
   
   // RFIDが選択されていない行を保持（ヘッダーを除外）
-  const rowsToKeep = data.slice(1).filter(row => !selectedRFIDs.includes(row[1]));
+  // RFID_EPCは4列目（インデックス3）にある
+  const rowsToKeep = data.slice(1).filter(row => !selectedRFIDs.includes(row[3]));
   
   // シートをクリア
   sheet.clearContents();
@@ -151,16 +158,12 @@ function searchRFIDByJAN(janCode) {
   
   // JANコードの列のインデックスを取得（ヘッダー行から）
   const headers = data[0];
-  const janCodeIndex = headers.findIndex(header => header === 'JANコード');
+  const janCodeIndex = 2; // JANコードは3列目（インデックス2）
   
   // デバッグログ
   Logger.log('Headers:', headers);
   Logger.log('JAN Code Index:', janCodeIndex);
   Logger.log('Searching for JAN code:', janCode);
-  
-  if (janCodeIndex === -1) {
-    throw new Error('JANコードの列が見つかりません。');
-  }
   
   // JANコードに一致する行を全て検索
   const results = [];
@@ -173,11 +176,12 @@ function searchRFIDByJAN(janCode) {
       Logger.log('Match found in row:', i);
       const result = {
         timestamp: row[0] instanceof Date ? row[0].toISOString() : String(row[0]),
-        rfid: String(row[1]),
-        maker: String(row[2]),
-        category: String(row[3]),
-        name: String(row[4]),
-        janCode: currentJANCode
+        productInfo: String(row[1]),
+        janCode: currentJANCode,
+        rfid: String(row[3]),
+        maker: String(row[4]),
+        category: String(row[5]),
+        name: String(row[6])
       };
       Logger.log('Adding result:', result);
       results.push(result);
@@ -190,3 +194,40 @@ function searchRFIDByJAN(janCode) {
   // 必ず配列を返す
   return results.length > 0 ? results : [];
 }
+
+/**
+ * スプレッドシートの全シート名を取得する関数
+ * @returns {Array} シート名の配列
+ */
+function getAllSheetNames() {
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  const sheets = spreadsheet.getSheets();
+  return sheets.map(sheet => sheet.getName());
+}
+
+/**
+ * 指定されたシートからJANコードをインポートする関数
+ * @param {string} sheetName - シート名
+ * @returns {Array} JANコードの配列
+ */
+function importJANCodesFromSheet(sheetName) {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(sheetName);
+  if (!sheet) {
+    throw new Error(`シート "${sheetName}" が見つかりません。`);
+  }
+
+  const dataRange = sheet.getDataRange();
+  const data = dataRange.getValues();
+  const headers = data[0];
+  
+  // JANコードの列インデックスを探す（2列目、インデックス1）
+  const janCodeIndex = 1;
+  
+  // ヘッダー行を除外し、JANコード列の値を取得
+  const janCodes = data.slice(1)
+    .map(row => String(row[janCodeIndex]).trim())
+    .filter(code => code !== ''); // 空の値を除外
+  
+  // 重複を除去して返す
+  return [...new Set(janCodes)];
+} 
