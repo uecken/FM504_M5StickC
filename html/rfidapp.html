@@ -436,45 +436,62 @@
       let allUniqueRFIDs = []; // 全体のユニークなRFID IDのリスト
       let fullRFIDList = []; // 照会モード用の全RFIDリスト
 
-      // アクティブモードの状態を管理する変数
-      let isActiveMode = true;
+      // アプリケーションの状態を管理するオブジェクトを定義
+      const appState = {
+        isActiveMode: true,
+        currentMode: 'query',
+        focusInterval: null, // focusIntervalをここで初期化
+        cameraMode: null,
+        cameraTarget: null
+      };
 
-      // 見つかったJANコードを永続的に追跡する集合
-      let persistentFoundJANCodes = new Set();
-
-      // モードを切り替える関数を修正
+      // モード切替関数を修正して、照会モード時にRFIDリストを読み込むようにする
       function switchMode(mode) {
-        document.getElementById('registerSection').style.display = 'none';
-        document.getElementById('querySection').style.display = 'none';
-        document.getElementById('myForm').style.display = 'block';
-        document.getElementById('successMessage').style.display = 'none';
-        document.getElementById('querySuccessMessage').style.display = 'none';
-        document.getElementById('queryNotFoundMessage').style.display = 'none';
-        document.getElementById('errorMessage').style.display = 'none';
-
-        if (mode === 'registration') {
-          // 登録モードに切り替える時、アクティブモードをOFFにする
-          isActiveMode = false;
-          const button = document.getElementById('activeMode');
-          button.textContent = 'アクティブモード: OFF';
-          button.classList.remove('btn-active-on');
-          button.classList.add('btn-active-off');
-          document.getElementById("rfidData").blur();
-          
-          document.getElementById('registerSection').style.display = 'block';
-          // 登録モードに切り替える時に見つかったJANコードをリセット
-          persistentFoundJANCodes.clear();
-          
-          // 登録モードに切り替えたときに空のテーブルを初期化
-          initializeEmptyPreviewTable();
-        } else if (mode === 'query') {
-          document.getElementById('querySection').style.display = 'block';
-          loadRFIDList();
-        }
+        appState.currentMode = mode;
         
-        // アクティブモードの場合、フォーカスを設定
-        if (isActiveMode) {
-          setTimeout(() => setFocus(), 100);
+        if (mode === 'registration') {
+          // 登録モードの表示設定
+          document.getElementById('registerSection').style.display = 'block';
+          document.getElementById('querySection').style.display = 'none';
+          
+          // 登録モードではフォーカスを設定しない
+          appState.isActiveMode = false;
+          
+          // フォーカス維持タイマーをクリア
+          if (appState.focusInterval) {
+            clearInterval(appState.focusInterval);
+            appState.focusInterval = null;
+          }
+          
+          // アクティブモードボタンの表示を更新
+          const button = document.getElementById('activeMode');
+          if (button) {
+            button.classList.remove('btn-active-on');
+            button.classList.add('btn-active-off');
+            button.textContent = 'アクティブモード: OFF';
+          }
+          
+        } else if (mode === 'query') {
+          // 照会モードの表示設定
+          document.getElementById('registerSection').style.display = 'none';
+          document.getElementById('querySection').style.display = 'block';
+          
+          // 照会モードではアクティブモードを有効にする
+          appState.isActiveMode = true;
+          
+          // アクティブモードボタンの表示を更新
+          const button = document.getElementById('activeMode');
+          if (button) {
+            button.classList.remove('btn-active-off');
+            button.classList.add('btn-active-on');
+            button.textContent = 'アクティブモード: ON';
+          }
+          
+          // RFIDリストを読み込む
+          loadRFIDList();
+          
+          // 照会モードの場合のみフォーカスを設定
+          setFocus();
         }
       }
 
@@ -752,107 +769,193 @@
         }
       }
 
-      // 照会モードでのRFIDリスト読み込み関数を修正
+      // RFIDリストを読み込む関数を修正
       function loadRFIDList() {
-        console.log("loadRFIDList: JAN-RFIDシートからデータを読み込みます");
-        // JAN-RFIDシートからデータを読み込む
+        console.log('loadRFIDList: JAN-RFIDシートからデータを読み込みます');
+        
+        // ローディングインジケータを表示
+        showLoadingIndicator();
+        
+        // サーバーサイド関数を呼び出してRFIDリストを取得
         google.script.run
-          .withSuccessHandler(function(result) {
-            console.log("getRFIDListFromSheet success:", result);
-            displayRFIDList(result);
+          .withSuccessHandler(function(rfidList) {
+            console.log('getRFIDListFromSheet success:', rfidList);
+            
+            // RFIDリストを表示
+            displayRFIDList(rfidList);
+            
+            // ローディングインジケータを非表示
+            hideLoadingIndicator();
           })
           .withFailureHandler(function(error) {
-            console.error("getRFIDListFromSheet error:", error);
-            handleLoadRFIDListError(error);
+            console.error('getRFIDListFromSheet error:', error);
+            alert('RFIDリストの取得に失敗しました: ' + error);
+            
+            // ローディングインジケータを非表示
+            hideLoadingIndicator();
           })
-          .getRFIDListFromSheet("JAN-RFID");
+          .getRFIDListFromSheet('JAN-RFID');
       }
 
-      // RFIDリストを表示する関数
+      // RFIDリストを表示する関数を修正
       function displayRFIDList(rfidList) {
-        console.log("displayRFIDList 関数が呼び出されました。");
-        console.log("Received rfidList:", rfidList);
+        console.log('displayRFIDList 関数が呼び出されました。');
+        console.log('Received rfidList:', rfidList);
         
-        const rfidTable = document.getElementById("rfidTable");
-        const tbody = rfidTable.getElementsByTagName("tbody")[0];
-        tbody.innerHTML = "";
-        
-        if (!rfidList || rfidList.length === 0) {
-          console.log("RFIDリストが空です。");
-          const row = document.createElement("tr");
-          const cell = document.createElement("td");
-          cell.colSpan = 5; // 列数に合わせて調整
-          cell.textContent = "データがありません。";
-          cell.style.textAlign = "center";
-          row.appendChild(cell);
-          tbody.appendChild(row);
-          
-          console.log("照会リストが表示されました。");
+        // テーブル要素を取得
+        const table = document.getElementById('rfidTable');
+        if (!table) {
+          console.error('rfidTable 要素が見つかりません');
           return;
         }
         
-        // RFIDリストを表示
-        rfidList.forEach((item, index) => {
-          const row = document.createElement("tr");
-          // データ属性としてJANコードとRFIDを設定
-          row.setAttribute("data-jan-code", item.janCode);
-          row.setAttribute("data-rfid", item.rfid);
+        // テーブルのボディ部分を取得または作成
+        let tbody = table.querySelector('tbody');
+        if (!tbody) {
+          tbody = document.createElement('tbody');
+          table.appendChild(tbody);
+        } else {
+          // 既存の内容をクリア
+          tbody.innerHTML = '';
+        }
+        
+        // データがない場合
+        if (!rfidList || rfidList.length === 0) {
+          const row = document.createElement('tr');
+          const cell = document.createElement('td');
+          cell.colSpan = 5; // 列数に合わせて調整
+          cell.textContent = 'データがありません';
+          cell.style.textAlign = 'center';
+          cell.style.padding = '20px';
+          row.appendChild(cell);
+          tbody.appendChild(row);
           
-          // 選択チェックボックスのセル
-          const selectCell = document.createElement("td");
-          selectCell.style.width = "10%";
-          selectCell.style.textAlign = "center";
-          const selectCheckbox = document.createElement("input");
-          selectCheckbox.type = "checkbox";
-          selectCheckbox.className = "rfid-checkbox checkbox-large";
-          selectCheckbox.checked = false; // 初期状態ではチェックなし
-          selectCell.appendChild(selectCheckbox);
-          row.appendChild(selectCell);
+          console.log('データがないため、空のメッセージを表示しました');
+          return;
+        }
+        
+        // 各RFIDデータに対して行を作成
+        rfidList.forEach(function(item, index) {
+          const row = document.createElement('tr');
+          row.setAttribute('data-jan-code', item.janCode);
+          row.setAttribute('data-rfid', item.rfid);
           
-          // JANコードのセル
-          const janCodeCell = document.createElement("td");
-          janCodeCell.style.width = "25%";
-          janCodeCell.style.overflow = "hidden";
-          janCodeCell.style.textOverflow = "ellipsis";
-          janCodeCell.textContent = item.janCode || "";
+          // チェックボックスセル
+          const checkboxCell = document.createElement('td');
+          const checkbox = document.createElement('input');
+          checkbox.type = 'checkbox';
+          checkbox.className = 'rfid-checkbox';
+          checkboxCell.appendChild(checkbox);
+          row.appendChild(checkboxCell);
+          
+          // JANコードセル
+          const janCodeCell = document.createElement('td');
+          janCodeCell.textContent = item.janCode;
           row.appendChild(janCodeCell);
           
-          // RFIDのセル
-          const rfidCell = document.createElement("td");
-          rfidCell.style.width = "35%";
-          rfidCell.style.fontFamily = "monospace";
-          rfidCell.style.overflow = "hidden";
-          rfidCell.style.textOverflow = "ellipsis";
-          rfidCell.textContent = item.rfid || "";
+          // RFIDセル
+          const rfidCell = document.createElement('td');
+          rfidCell.textContent = item.rfid;
           row.appendChild(rfidCell);
           
-          // 発見状態のセル
-          const foundCell = document.createElement("td");
-          foundCell.style.width = "10%";
-          foundCell.style.textAlign = "center";
-          const foundCheckbox = document.createElement("input");
-          foundCheckbox.type = "checkbox";
-          foundCheckbox.className = "found-checkbox checkbox-large";
-          foundCheckbox.disabled = true; // 初期状態では無効
-          foundCell.appendChild(foundCheckbox);
-          row.appendChild(foundCell);
+          // 発見セル
+          const discoveryCell = document.createElement('td');
+          const discoveryCheckbox = document.createElement('input');
+          discoveryCheckbox.type = 'checkbox';
+          discoveryCheckbox.className = 'discovery-checkbox';
+          discoveryCheckbox.disabled = true; // 編集不可
+          discoveryCell.appendChild(discoveryCheckbox);
+          row.appendChild(discoveryCell);
           
-          // スキャン回数のセル
-          const countCell = document.createElement("td");
-          countCell.style.width = "10%";
-          countCell.style.textAlign = "center";
-          countCell.textContent = "0回";
-          countCell.className = "scan-count-cell";
-          countCell.setAttribute("data-count", "0");
+          // 発見回数セル
+          const countCell = document.createElement('td');
+          countCell.textContent = '0';
+          countCell.className = 'discovery-count';
           row.appendChild(countCell);
           
+          // 行をテーブルに追加
           tbody.appendChild(row);
         });
         
-        console.log("照会リストが表示されました。");
+        console.log('照会リストが表示されました。');
+      }
+
+      // ローディングインジケータを表示する関数
+      function showLoadingIndicator() {
+        // ローディングインジケータ要素を取得または作成
+        let loadingIndicator = document.getElementById('loadingIndicator');
         
-        // JANコードの状態を更新
-        updateJANCodeStatuses();
+        if (!loadingIndicator) {
+          loadingIndicator = document.createElement('div');
+          loadingIndicator.id = 'loadingIndicator';
+          loadingIndicator.style.position = 'fixed';
+          loadingIndicator.style.top = '0';
+          loadingIndicator.style.left = '0';
+          loadingIndicator.style.width = '100%';
+          loadingIndicator.style.height = '100%';
+          loadingIndicator.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
+          loadingIndicator.style.display = 'flex';
+          loadingIndicator.style.justifyContent = 'center';
+          loadingIndicator.style.alignItems = 'center';
+          loadingIndicator.style.zIndex = '9999';
+          
+          const spinner = document.createElement('div');
+          spinner.className = 'spinner';
+          spinner.style.width = '50px';
+          spinner.style.height = '50px';
+          spinner.style.border = '5px solid #f3f3f3';
+          spinner.style.borderTop = '5px solid #3498db';
+          spinner.style.borderRadius = '50%';
+          spinner.style.animation = 'spin 1s linear infinite';
+          
+          loadingIndicator.appendChild(spinner);
+          document.body.appendChild(loadingIndicator);
+          
+          // スピナーアニメーションのスタイルを追加
+          const style = document.createElement('style');
+          style.textContent = `
+            @keyframes spin {
+              0% { transform: rotate(0deg); }
+              100% { transform: rotate(360deg); }
+            }
+          `;
+          document.head.appendChild(style);
+        }
+        
+        loadingIndicator.style.display = 'flex';
+      }
+
+      // ローディングインジケータを非表示にする関数
+      function hideLoadingIndicator() {
+        const loadingIndicator = document.getElementById('loadingIndicator');
+        if (loadingIndicator) {
+          loadingIndicator.style.display = 'none';
+        }
+      }
+
+      // RFIDを削除する関数
+      function deleteRFID(janCode, rfid) {
+        // ローディングインジケータを表示
+        showLoadingIndicator();
+        
+        // サーバーサイド関数を呼び出してRFIDを削除
+        google.script.run
+          .withSuccessHandler(function(result) {
+            if (result.success) {
+              alert('RFIDが正常に削除されました。');
+              // リストを再読み込み
+              loadRFIDList();
+            } else {
+              alert('RFIDの削除に失敗しました: ' + result.message);
+              hideLoadingIndicator();
+            }
+          })
+          .withFailureHandler(function(error) {
+            console.error('deleteRFID error:', error);
+            alert('RFIDの削除に失敗しました: ' + error);
+            hideLoadingIndicator();
+          })
+          .deleteRFIDFromSheet('JAN-RFID', janCode, rfid);
       }
 
       // 照会モードでデータ取得失敗時のエラーハンドリング関数
@@ -1005,7 +1108,7 @@
         document.getElementById("rfidData").value = "";
         
         // アクティブモードの場合、フォーカスを戻す
-        if (isActiveMode) {
+        if (appState.isActiveMode) {
           setTimeout(() => setFocus(), 10);
         }
       }
@@ -1233,12 +1336,7 @@
           alert("登録するデータがありません。");
           return;
         }
-        
-        // 登録の確認アラートを追加
-        if (!confirm("登録してもよろしいですか？")) {
-          return;
-        }
-        
+                
         const entries = [];
         
         for (let i = 0; i < rows.length; i++) {
@@ -1377,7 +1475,7 @@
           .getAllSheetNames();
         
         // 初期状態（アクティブモードON）の設定
-        isActiveMode = true;
+        appState.isActiveMode = true;
         const button = document.getElementById('activeMode');
         button.classList.add('btn-active-on');
         button.textContent = 'アクティブモード: ON';
@@ -1389,7 +1487,7 @@
         
         // フォーカスアウト時の再フォーカス
         textarea.addEventListener('focusout', function(e) {
-          if (isActiveMode) {
+          if (appState.isActiveMode) {
             e.preventDefault(); // デフォルト動作を防止
             setTimeout(() => setFocus(), 10);
           }
@@ -1397,14 +1495,14 @@
         
         // クリック時にフォーカスが外れないようにする
         document.addEventListener('click', function(e) {
-          if (isActiveMode && e.target !== textarea) {
+          if (appState.isActiveMode && e.target !== textarea) {
             setTimeout(() => setFocus(), 10);
           }
         });
         
         // タッチ時にフォーカスが外れないようにする（モバイル対応）
         document.addEventListener('touchstart', function(e) {
-          if (isActiveMode && e.target !== textarea) {
+          if (appState.isActiveMode && e.target !== textarea) {
             setTimeout(() => setFocus(), 10);
           }
         });
@@ -1514,34 +1612,26 @@
 
       // フォーカスを設定する関数を強化
       function setFocus() {
-        const textarea = document.getElementById("rfidData");
-        if (isActiveMode) {
-          textarea.focus();
-          
-          // フォーカスが外れないようにするための追加対策
-          // 100ms間隔でフォーカスをチェックし、必要に応じて再設定
-          if (window.focusInterval) {
-            clearInterval(window.focusInterval);
-          }
-          
-          window.focusInterval = setInterval(() => {
-            if (isActiveMode && document.activeElement !== textarea) {
-              console.log('フォーカスが外れたため再設定します');
-              textarea.focus();
-            }
-          }, 100);
-        } else if (window.focusInterval) {
-          clearInterval(window.focusInterval);
+        // 現在のモードが登録モードの場合はフォーカスを設定しない
+        if (document.getElementById("registerSection").style.display === "block") {
+          return;
+        }
+        
+        // 照会モードの場合のみフォーカスを設定
+        const rfidData = document.getElementById("rfidData");
+        if (rfidData && appState.isActiveMode) {
+          console.log('RFIDデータ入力欄にフォーカスを設定します');
+          rfidData.focus();
         }
       }
 
       // blur イベントのハンドラー関数を強化
       function handleBlur(e) {
-        if (isActiveMode) {
+        if (appState.isActiveMode) {
           const textarea = document.getElementById("rfidData");
           // 即時フォーカスを戻す
           setTimeout(() => {
-            if (isActiveMode && document.activeElement !== textarea) {
+            if (appState.isActiveMode && document.activeElement !== textarea) {
               console.log('blur イベント後にフォーカスを再設定します');
               textarea.focus();
             }
@@ -1556,12 +1646,12 @@
 
       // アクティブモードを切り替える関数を修正
       function toggleActiveMode() {
-        isActiveMode = !isActiveMode;
+        appState.isActiveMode = !appState.isActiveMode;
         const button = document.getElementById('activeMode');
-        button.textContent = `アクティブモード: ${isActiveMode ? 'ON' : 'OFF'}`;
+        button.textContent = `アクティブモード: ${appState.isActiveMode ? 'ON' : 'OFF'}`;
         
         // ボタンのスタイルを切り替え
-        if (isActiveMode) {
+        if (appState.isActiveMode) {
           button.classList.remove('btn-active-off');
           button.classList.add('btn-active-on');
           setFocus(); // フォーカスを設定
