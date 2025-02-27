@@ -6,13 +6,32 @@
     <!-- ビューポートメタタグの追加 -->
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
-      /* 基本スタイル */
       body {
-        font-family: Arial, sans-serif;
-        margin: 20px;
-        padding: 0;
-        background-color: #f9f9f9;
+        font-family: 'Helvetica Neue', Arial, sans-serif;
+        line-height: 1.6;
+        color: #333;
+        max-width: 100%;
+        margin: 0;
+        padding: 10px;
+        box-sizing: border-box;
       }
+      
+      /* コンテナスタイル */
+      .container {
+        width: 100%;
+        max-width: 100%;
+        padding: 0 5px;
+        margin: 0 auto;
+      }
+      
+      /* テーブルのスタイル */
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        margin-bottom: 20px;
+        table-layout: fixed;
+      }
+      
       h1, h2 ,h3{
         text-align: center;
       }
@@ -323,7 +342,6 @@
               <th style="width: 40%;">JANコード</th>
               <th style="width: 20%;">アクション</th>
               <th style="width: 15%;">状態</th>
-              <th style="width: 15%;">探索状態</th>
             </tr>
           </thead>
           <tbody id="janCodeBody">
@@ -339,9 +357,6 @@
                 <button type="button" class="btn btn-yellow" onclick="startCameraAnalysis('query', this)" aria-label="カメラでJANコードを読み取る">カメラで読取</button>
               </td>
               <td class="status-cell"></td>
-              <td>
-                <input type="checkbox" class="search-status-checkbox checkbox-large" onchange="updateSearchStatus(this)">
-              </td>
             </tr>
           </tbody>
         </table>
@@ -754,7 +769,7 @@
           .getRFIDListFromSheet("JAN-RFID");
       }
 
-      // RFIDリストを表示する関数を修正
+      // RFIDリストを表示する関数
       function displayRFIDList(rfidList) {
         console.log("displayRFIDList 関数が呼び出されました。");
         console.log("Received rfidList:", rfidList);
@@ -767,7 +782,7 @@
           console.log("RFIDリストが空です。");
           const row = document.createElement("tr");
           const cell = document.createElement("td");
-          cell.colSpan = 5; // 列数に合わせて調整（スキャン回数列を追加したので5に変更）
+          cell.colSpan = 5; // 列数に合わせて調整
           cell.textContent = "データがありません。";
           cell.style.textAlign = "center";
           row.appendChild(cell);
@@ -786,27 +801,36 @@
           
           // 選択チェックボックスのセル
           const selectCell = document.createElement("td");
+          selectCell.style.width = "10%";
+          selectCell.style.textAlign = "center";
           const selectCheckbox = document.createElement("input");
           selectCheckbox.type = "checkbox";
           selectCheckbox.className = "rfid-checkbox checkbox-large";
-          selectCheckbox.value = item.rfid; // チェックボックスの値としてRFIDを設定
           selectCheckbox.checked = false; // 初期状態ではチェックなし
           selectCell.appendChild(selectCheckbox);
           row.appendChild(selectCell);
           
           // JANコードのセル
           const janCodeCell = document.createElement("td");
+          janCodeCell.style.width = "25%";
+          janCodeCell.style.overflow = "hidden";
+          janCodeCell.style.textOverflow = "ellipsis";
           janCodeCell.textContent = item.janCode || "";
           row.appendChild(janCodeCell);
           
           // RFIDのセル
           const rfidCell = document.createElement("td");
+          rfidCell.style.width = "35%";
+          rfidCell.style.fontFamily = "monospace";
+          rfidCell.style.overflow = "hidden";
+          rfidCell.style.textOverflow = "ellipsis";
           rfidCell.textContent = item.rfid || "";
           row.appendChild(rfidCell);
           
           // 発見状態のセル
           const foundCell = document.createElement("td");
-          foundCell.setAttribute('data-found-count', '0');
+          foundCell.style.width = "10%";
+          foundCell.style.textAlign = "center";
           const foundCheckbox = document.createElement("input");
           foundCheckbox.type = "checkbox";
           foundCheckbox.className = "found-checkbox checkbox-large";
@@ -816,8 +840,11 @@
           
           // スキャン回数のセル
           const countCell = document.createElement("td");
+          countCell.style.width = "10%";
+          countCell.style.textAlign = "center";
           countCell.textContent = "0回";
           countCell.className = "scan-count-cell";
+          countCell.setAttribute("data-count", "0");
           row.appendChild(countCell);
           
           tbody.appendChild(row);
@@ -880,9 +907,6 @@
         let foundAny = false;
         let notFoundRFIDs = [];
         let uniqueFoundRFIDs = new Set();
-        let foundJANCodes = new Map(); // JANコードとタイムスタンプのマップ
-
-        const currentTimestamp = new Date().toLocaleString('ja-JP');
 
         queryRFIDs.forEach(queryRFID => {
           console.log('検索中のRFID:', queryRFID);
@@ -927,11 +951,6 @@
                   countCell.textContent = `${newCount}回`;
                 }
                 
-                // JANコードを記録（タイムスタンプ付き）
-                if (rowJANCode) {
-                  foundJANCodes.set(rowJANCode, currentTimestamp);
-                }
-                
                 // 該当行をハイライト
                 row.style.backgroundColor = '#e6ffe6';
                 setTimeout(() => {
@@ -952,9 +971,6 @@
             notFoundRFIDs.push(queryRFID);
           }
         });
-
-        // JANコードの状態フィールドを更新
-        updateJANCodeStatusFields(foundJANCodes);
 
         // 見つかったユニークなRFIDが1つ以上ある場合のみbeepを1回実行
         if (uniqueFoundRFIDs.size > 0) {
@@ -1685,26 +1701,6 @@
           .importJANCodesFromSheet(sheetName);
       }
 
-      // 探索状態チェックボックスの変更時の処理を追加
-      function updateSearchStatus(checkbox) {
-        if (checkbox.checked) {
-          // チェックが付いた場合、選択チェックボックスを外す
-          const row = checkbox.closest('tr');
-          const selectCheckbox = row.querySelector('.jan-code-checkbox');
-          if (selectCheckbox) {
-            selectCheckbox.checked = false;
-            // 選択状態の更新を呼び出す
-            updateRFIDSelectionsByJANCode(selectCheckbox);
-          }
-          
-          // 行の背景色を変更して探索完了を視覚的に示す
-          row.style.backgroundColor = '#f0f0f0';
-        } else {
-          // チェックが外れた場合、行の背景色を元に戻す
-          const row = checkbox.closest('tr');
-          row.style.backgroundColor = '';
-        }
-      }
 
       /**
        * Process form data and save to specified sheet
