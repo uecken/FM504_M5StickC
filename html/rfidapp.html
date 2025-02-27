@@ -964,7 +964,7 @@
         document.getElementById('errorMessage').style.display = 'block';
       }
 
-      // 照会モードでのRFID検索関数
+      // 照会モードでのRFID検索関数を修正
       function searchRFID() {
         const data = document.getElementById("rfidData").value.trim().toUpperCase();
         const queryRFIDs = parseRFIDDataFixedLength(data, RFID_LENGTH);
@@ -1044,16 +1044,27 @@
               
               if (rowRFID.toUpperCase() === queryRFID) {
                 // 発見チェックボックスをチェック
-                const foundCheckbox = row.querySelector('.found-checkbox');
+                const foundCheckbox = row.querySelector('.discovery-checkbox');
                 if (foundCheckbox) foundCheckbox.checked = true;
                 
-                // スキャン回数を更新
-                const countCell = row.querySelector('.scan-count-cell');
+                // 発見回数を更新 - ここを修正
+                const countCell = row.querySelector('.discovery-count');
                 if (countCell) {
-                  const currentCount = parseInt(countCell.getAttribute('data-count') || '0');
+                  // 現在の回数を取得して増加
+                  const currentCount = parseInt(countCell.textContent) || 0;
                   const newCount = currentCount + 1;
-                  countCell.setAttribute('data-count', newCount);
-                  countCell.textContent = `${newCount}回`;
+                  countCell.textContent = newCount.toString();
+                  console.log(`発見回数を更新: ${currentCount} → ${newCount}`);
+                } else {
+                  // 発見回数セルがない場合は5番目のセルを取得
+                  const cells = row.querySelectorAll('td');
+                  if (cells.length >= 5) {
+                    const fifthCell = cells[4]; // インデックスは0から始まるので5番目は[4]
+                    const currentCount = parseInt(fifthCell.textContent) || 0;
+                    const newCount = currentCount + 1;
+                    fifthCell.textContent = newCount.toString();
+                    console.log(`発見回数を更新 (5番目のセル): ${currentCount} → ${newCount}`);
+                  }
                 }
                 
                 // JANコードを記録（タイムスタンプ付き）
