@@ -350,7 +350,7 @@
               <td>
                 <input type="checkbox" class="jan-code-checkbox checkbox-large" checked onchange="updateJANCodeRowStyle(this)">
               </td>
-              <td>
+              <td>a
                 <input type="text" class="jan-code-input form-control" style="padding: 10px; font-size: 16px; width: 90%;" placeholder="JANコードを入力">
               </td>
               <td>
@@ -379,24 +379,17 @@
         <table id="rfidTable" style="width: 100%;">
           <thead>
             <tr>
-              <th style="width: 10%;">選択</th>
-              <th style="width: 40%;">JANコード</th>
-              <th style="width: 40%;">RFID ID</th>
+              <th style="width: 15%;">探索対象</th>
+              <th style="width: 30%;">JANコード</th>
+              <th style="width: 30%;">RFID ID</th>
               <th style="width: 10%;">発見</th>
+              <th style="width: 15%;">発見回数</th>
             </tr>
           </thead>
           <tbody>
             <!-- RFIDリストがここに挿入されます -->
           </tbody>
         </table>
-      </div>
-      <!-- アクションボタン -->
-      <div class="action-buttons" style="text-align: center; margin-top: 20px;">
-        <button type="button" class="btn btn-delete" onclick="deleteSelectedRFIDs()">選択したRFIDを削除</button>
-      </div>
-      <!-- 削除完了メッセージ -->
-      <div id="deleteSuccessMessage">
-        選択したRFIDが正常に削除されました。
       </div>
     </div>
     
@@ -478,6 +471,11 @@
           document.getElementById('querySection').style.display = 'block';
           loadRFIDList();
         }
+        
+        // アクティブモードの場合、フォーカスを設定
+        if (isActiveMode) {
+          setTimeout(() => setFocus(), 100);
+        }
       }
 
       // 空のプレビューテーブルを初期化する関数
@@ -549,6 +547,7 @@
         } else if (mode === 'query') {
           searchRFID();
         }
+        document.getElementById("rfidData").value = "";
       }
 
       // 新しいRFIDを処理する関数
@@ -907,6 +906,9 @@
         let foundAny = false;
         let notFoundRFIDs = [];
         let uniqueFoundRFIDs = new Set();
+        let foundJANCodes = new Map(); // JANコードとタイムスタンプのマップ
+
+        const currentTimestamp = new Date().toLocaleString('ja-JP');
 
         queryRFIDs.forEach(queryRFID => {
           console.log('検索中のRFID:', queryRFID);
@@ -951,6 +953,11 @@
                   countCell.textContent = `${newCount}回`;
                 }
                 
+                // JANコードを記録（タイムスタンプ付き）
+                if (rowJANCode) {
+                  foundJANCodes.set(rowJANCode, currentTimestamp);
+                }
+                
                 // 該当行をハイライト
                 row.style.backgroundColor = '#e6ffe6';
                 setTimeout(() => {
@@ -971,6 +978,9 @@
             notFoundRFIDs.push(queryRFID);
           }
         });
+
+        // JANコードの状態フィールドを更新
+        updateJANCodeStatusFields(foundJANCodes);
 
         // 見つかったユニークなRFIDが1つ以上ある場合のみbeepを1回実行
         if (uniqueFoundRFIDs.size > 0) {
@@ -993,6 +1003,11 @@
 
         // テキストエリアをクリア
         document.getElementById("rfidData").value = "";
+        
+        // アクティブモードの場合、フォーカスを戻す
+        if (isActiveMode) {
+          setTimeout(() => setFocus(), 10);
+        }
       }
 
       // 探索JANコードテーブルの状態フィールドを更新する関数
@@ -1362,7 +1377,7 @@
           .getAllSheetNames();
         
         // 初期状態（アクティブモードON）の設定
-        isActiveMode = false;
+        isActiveMode = true;
         const button = document.getElementById('activeMode');
         button.classList.add('btn-active-on');
         button.textContent = 'アクティブモード: ON';
@@ -1375,10 +1390,26 @@
         // フォーカスアウト時の再フォーカス
         textarea.addEventListener('focusout', function(e) {
           if (isActiveMode) {
+            e.preventDefault(); // デフォルト動作を防止
             setTimeout(() => setFocus(), 10);
           }
         });
         
+        // クリック時にフォーカスが外れないようにする
+        document.addEventListener('click', function(e) {
+          if (isActiveMode && e.target !== textarea) {
+            setTimeout(() => setFocus(), 10);
+          }
+        });
+        
+        // タッチ時にフォーカスが外れないようにする（モバイル対応）
+        document.addEventListener('touchstart', function(e) {
+          if (isActiveMode && e.target !== textarea) {
+            setTimeout(() => setFocus(), 10);
+          }
+        });
+        
+        // 初期フォーカスを設定
         setFocus();
       };
 
@@ -1481,23 +1512,45 @@
         });
       }
 
-      // フォーカスを設定する関数を修正
+      // フォーカスを設定する関数を強化
       function setFocus() {
         const textarea = document.getElementById("rfidData");
         if (isActiveMode) {
           textarea.focus();
+          
+          // フォーカスが外れないようにするための追加対策
+          // 100ms間隔でフォーカスをチェックし、必要に応じて再設定
+          if (window.focusInterval) {
+            clearInterval(window.focusInterval);
+          }
+          
+          window.focusInterval = setInterval(() => {
+            if (isActiveMode && document.activeElement !== textarea) {
+              console.log('フォーカスが外れたため再設定します');
+              textarea.focus();
+            }
+          }, 100);
+        } else if (window.focusInterval) {
+          clearInterval(window.focusInterval);
         }
       }
 
-      // blur イベントのハンドラー関数を修正
-      function handleBlur() {
-        const textarea = document.getElementById("rfidData");
+      // blur イベントのハンドラー関数を強化
+      function handleBlur(e) {
         if (isActiveMode) {
+          const textarea = document.getElementById("rfidData");
+          // 即時フォーカスを戻す
           setTimeout(() => {
-            if (document.activeElement !== textarea) {
+            if (isActiveMode && document.activeElement !== textarea) {
+              console.log('blur イベント後にフォーカスを再設定します');
               textarea.focus();
             }
           }, 10);
+          
+          // イベントのデフォルト動作を防止
+          if (e) {
+            e.preventDefault();
+          }
         }
       }
 
