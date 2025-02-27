@@ -238,4 +238,208 @@ function importJANCodesFromSheet(sheetName) {
   
   // 重複を除去して返す
   return [...new Set(janCodes)];
+}
+
+/**
+ * 指定されたシートにフォームデータを保存する関数
+ * @param {Object} data - フォームデータ（rfidDataとsheetNameを含む）
+ * @return {Object} レスポンスオブジェクト
+ */
+function processFormToSheet(data) {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    let sheet = ss.getSheetByName(data.sheetName);
+    
+    // シートが存在しない場合は作成
+    if (!sheet) {
+      sheet = ss.insertSheet(data.sheetName);
+      // ヘッダーを追加
+      sheet.appendRow(["JANコード", "RFID ID", "登録日時"]);
+    }
+    
+    const entries = data.rfidData;
+    const timestamp = new Date();
+    const formattedTimestamp = Utilities.formatDate(timestamp, 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
+    
+    // デバッグログ
+    Logger.log('Saving to sheet:', data.sheetName);
+    Logger.log('Entries to save:', JSON.stringify(entries));
+    
+    // 各エントリをシートに追加
+    const newEntries = [];
+    entries.forEach(entry => {
+      newEntries.push([
+        entry.janCode,
+        entry.rfid,
+        formattedTimestamp
+      ]);
+    });
+    
+    // データを一括で追加
+    if (newEntries.length > 0) {
+      const lastRow = sheet.getLastRow();
+      sheet.getRange(lastRow + 1, 1, newEntries.length, 3).setValues(newEntries);
+      Logger.log('Successfully added entries at row:', lastRow + 1);
+    }
+    
+    return { success: true, message: `${entries.length}件のデータが正常に登録されました。` };
+  } catch (error) {
+    Logger.log('Error in processFormToSheet:', error.toString());
+    return { success: false, message: error.toString() };
+  }
+}
+
+/**
+ * テスト用のデータを"JAN-RFID"シートに追加する関数
+ */
+function addTestDataToJanRfidSheet() {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    let sheet = ss.getSheetByName("JAN-RFID");
+    
+    // シートが存在しない場合は作成
+    if (!sheet) {
+      sheet = ss.insertSheet("JAN-RFID");
+      sheet.appendRow(["JANコード", "RFID ID", "登録日時"]);
+    }
+    
+    // 既存のデータをクリア（ヘッダーは残す）
+    const lastRow = sheet.getLastRow();
+    if (lastRow > 1) {
+      sheet.deleteRows(2, lastRow - 1);
+    }
+    
+    // テストデータを追加
+    const now = new Date();
+    const timestamp = Utilities.formatDate(now, 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
+    
+    const testData = [
+      ["4901234567890", "E2806F12000000021FC2FF11", timestamp],
+      ["4901234567891", "E2806F12000000021FC2FF22", timestamp],
+      ["4901234567892", "E2806F12000000021FC2FF33", timestamp]
+    ];
+    
+    // データを一括で追加
+    sheet.getRange(2, 1, testData.length, 3).setValues(testData);
+    
+    return "テストデータを追加しました";
+  } catch (error) {
+    Logger.log('Error in addTestDataToJanRfidSheet:', error.toString());
+    return "エラー: " + error.toString();
+  }
+}
+
+/**
+ * 指定されたシートからRFIDリストを取得する関数
+ * @param {string} sheetName - データを取得するシート名
+ * @return {Array} RFIDオブジェクトの配列
+ */
+function getRFIDListFromSheet(sheetName) {
+  try {
+    Logger.log(`Getting RFID list from sheet: ${sheetName}`);
+    
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    Logger.log(`Active spreadsheet ID: ${ss.getId()}`);
+    
+    // 全シート名をログに出力
+    const allSheets = ss.getSheets();
+    const sheetNames = allSheets.map(sheet => sheet.getName());
+    Logger.log(`Available sheets: ${sheetNames.join(', ')}`);
+    
+    const sheet = ss.getSheetByName(sheetName);
+    
+    if (!sheet) {
+      Logger.log(`Sheet "${sheetName}" not found. Creating it now.`);
+      // シートが存在しない場合は作成
+      const newSheet = ss.insertSheet(sheetName);
+      newSheet.appendRow(["JANコード", "RFID ID", "登録日時"]);
+      
+      // テストデータを追加（開発中のみ）
+      const now = new Date();
+      const timestamp = Utilities.formatDate(now, 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
+      newSheet.appendRow(["4901234567890", "E2806F12000000021FC2FF11", timestamp]);
+      newSheet.appendRow(["4901234567891", "E2806F12000000021FC2FF22", timestamp]);
+      
+      return [
+        { janCode: "4901234567890", rfid: "E2806F12000000021FC2FF11" },
+        { janCode: "4901234567891", rfid: "E2806F12000000021FC2FF22" }
+      ];
+    }
+    
+    const data = sheet.getDataRange().getValues();
+    Logger.log(`Data range size: ${data.length} rows`);
+    
+    // データが空または1行（ヘッダーのみ）の場合
+    if (data.length <= 1) {
+      Logger.log(`No data found in sheet "${sheetName}"`);
+      
+      // テストデータを追加（開発中のみ）
+      const now = new Date();
+      const timestamp = Utilities.formatDate(now, 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
+      sheet.appendRow(["4901234567890", "E2806F12000000021FC2FF11", timestamp]);
+      sheet.appendRow(["4901234567891", "E2806F12000000021FC2FF22", timestamp]);
+      
+      return [
+        { janCode: "4901234567890", rfid: "E2806F12000000021FC2FF11" },
+        { janCode: "4901234567891", rfid: "E2806F12000000021FC2FF22" }
+      ];
+    }
+    
+    // ヘッダー行を確認
+    const headers = data[0];
+    Logger.log(`Headers: ${headers.join(', ')}`);
+    
+    const janCodeIndex = headers.indexOf("JANコード");
+    const rfidIndex = headers.indexOf("RFID ID");
+    
+    // ヘッダーが見つからない場合
+    if (janCodeIndex === -1 || rfidIndex === -1) {
+      Logger.log(`Required headers not found in sheet "${sheetName}". Headers: ${headers.join(', ')}`);
+      // ヘッダーが見つからない場合は、シートを初期化
+      sheet.clear();
+      sheet.appendRow(["JANコード", "RFID ID", "登録日時"]);
+      
+      // テストデータを追加（開発中のみ）
+      const now = new Date();
+      const timestamp = Utilities.formatDate(now, 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
+      sheet.appendRow(["4901234567890", "E2806F12000000021FC2FF11", timestamp]);
+      sheet.appendRow(["4901234567891", "E2806F12000000021FC2FF22", timestamp]);
+      
+      return [
+        { janCode: "4901234567890", rfid: "E2806F12000000021FC2FF11" },
+        { janCode: "4901234567891", rfid: "E2806F12000000021FC2FF22" }
+      ];
+    }
+    
+    Logger.log('JAN Code Index:', janCodeIndex);
+    Logger.log('RFID Index:', rfidIndex);
+    
+    // ヘッダー行を除外
+    const result = [];
+    for (let i = 1; i < data.length; i++) {
+      const row = data[i];
+      // 空の行をスキップ
+      if (!row[janCodeIndex] && !row[rfidIndex]) {
+        continue;
+      }
+      result.push({
+        janCode: String(row[janCodeIndex] || ""),
+        rfid: String(row[rfidIndex] || "")
+      });
+    }
+    
+    Logger.log(`Found ${result.length} records in sheet "${sheetName}"`);
+    if (result.length > 0) {
+      Logger.log('First record:', JSON.stringify(result[0]));
+    }
+    
+    return result;
+  } catch (error) {
+    Logger.log('Error in getRFIDListFromSheet:', error.toString());
+    // スタックトレースも記録
+    if (error.stack) {
+      Logger.log('Stack trace:', error.stack);
+    }
+    throw new Error(`Failed to get RFID list: ${error.toString()}`);
+  }
 } 
